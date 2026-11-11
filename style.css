@@ -246,3 +246,7 @@ h2::before{content:"";width:18px;height:3px;border-radius:3px;background:linear-
 .rp span{padding:5px 12px;border-radius:12px;background:var(--gl);border:1px solid var(--bd);font-size:.82rem;font-weight:700}
 #cf{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:120}
 @media(prefers-reduced-motion:reduce){.ringw .f{stroke-dashoffset:var(--o)}}
+
+/* ===== logo + horizontal floating buttons ===== */
+.brand img.mk{width:44px;height:44px;border-radius:50%;object-fit:cover;background:none;box-shadow:0 4px 16px -4px var(--b)}
+.fabs{flex-direction:row;align-items:center;justify-content:flex-end;gap:10px}
