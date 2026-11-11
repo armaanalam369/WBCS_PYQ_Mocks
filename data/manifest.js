@@ -19,23 +19,23 @@ window.RULES = {
      `i` = icon, `k` = short code used on the radar chart. */
   topics: [
     { n: 'English',                    i: '🔤', k: 'English'  },
-    { n: 'Ancient History',            i: '🏺', k: 'Ancient History'  },
-    { n: 'Medieval History',           i: '🏰', k: 'Medieval History'  },
-    { n: 'Modern History',             i: '📜', k: 'Modern History'  },
-    { n: 'Indian National Movement',   i: '🇮🇳', k: 'Indian National Movement'  },
-    { n: 'Indian Geography',           i: '🗺️', k: 'Indian Geography' },
-    { n: 'World & Physical Geography', i: '🌍', k: 'World & Physical Geography' },
-    { n: 'Arts & Culture',             i: '🎭', k: 'Arts & Culture'  },
-    { n: 'West Bengal Specific',       i: '🐅', k: 'W.B. Specific'   },
     { n: 'Indian Polity',              i: '🏛️', k: 'Polity'  },
+    { n: 'Ancient History',            i: '🏺', k: 'Ancient History'  },
     { n: 'Indian Economy',             i: '💹', k: 'Econony'  },
+    { n: 'Medieval History',           i: '🏰', k: 'Medieval History'  },
     { n: 'Physics',                    i: '⚛️', k: 'Physics'  },
+    { n: 'Indian National Movement',   i: '🇮🇳', k: 'Indian National Movement'  },
     { n: 'Chemistry',                  i: '🧪', k: 'Chemistry'  },
+    { n: 'World & Physical Geography', i: '🌍', k: 'World & Physical Geography' },
     { n: 'Biology',                    i: '🧬', k: 'Biology'  },
+    { n: 'Modern History',             i: '📜', k: 'Modern History'  },
+    { n: 'Arts & Culture',             i: '🎭', k: 'Arts & Culture'  },
+    { n: 'Indian Geography',           i: '🗺️', k: 'Indian Geography' },
+    { n: 'West Bengal Specific',       i: '🐅', k: 'W.B. Specific'   },
     { n: 'Environmental Studies',      i: '🌱', k: 'Environmental Studies'  },
     { n: 'Static GK',                  i: '📌', k: 'Static GK'   },
-    { n: 'Current Affairs',            i: '📰', k: 'Current Affairs'   },
-    { n: 'General Mental Ability',     i: '🧠', k: 'General Mental Ability'  }
+    { n: 'General Mental Ability',     i: '🧠', k: 'General Mental Ability'  },
+    { n: 'Current Affairs',            i: '📰', k: 'Current Affairs'   }
   ]
 };
 
