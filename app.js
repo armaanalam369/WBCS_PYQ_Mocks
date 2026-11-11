@@ -174,7 +174,11 @@ function counts(year, unseen) {
 }
 var sumC = function (c, only) { return Object.keys(c).reduce(function (n, k) { return n + (!only || only[k] ? c[k] : 0); }, 0); };
 function preload() {
-  return Promise.all(PL.map(function (p) { return load(p).catch(function () { return null; }); })).then(function () { LOADED = true; if (S.view === 'home') home(true); });
+  return Promise.all(PL.map(function (p) { return load(p).then(function () { return p; }, function () { return null; }); })).then(function (r) {
+    var ok = r.filter(Boolean);
+    if (ok.length && ok.length < PL.length) { PL = ok; latest = PL.slice().sort(function (a, b) { return (b.year - a.year) || 0; })[0]; if (S.year !== 'all' && !window.PAPERS[S.year]) S.year = String(latest.year); }
+    LOADED = true; if (S.view === 'home') home(true);
+  });
 }
 
 /* ---------- home ---------- */
@@ -213,7 +217,7 @@ function home(keepScroll) {
   card += '<div class="line"><span>Rough pad &amp; calculator<small>Show ✏️ and 🧮 buttons during the test</small></span>' + sw(SET.tools, 'tg', 'tools') + '</div>';
   if (!q && full) card += '<div class="line"><span>Full-screen exam mode<small>Warns if you leave full-screen or switch tabs</small></span>' + sw(SET.fullscreen, 'tg', 'fullscreen') + '</div>';
   var nStart = full ? sumC(counts(S.year, false)) : Math.min(S.cnt || 1e9, sumC(cYear, (function () { var m = {}; TOPICS.forEach(function (t) { if (S.secs[t]) m[t] = 1; }); return m; })()));
-  render('<h1>Practice smarter 🚀</h1><p class="mu" style="margin-bottom:14px">West Bengal Civil Service (WBCS) Prelims · Previous Year Questions</p>' + stats + homeCards() +
+  render('<section class="hero"><h1>Practise the real WBCS Prelims papers</h1><p class="mu">Year-wise or chapter-wise previous-year questions, timed like the exam, with analysis that shows where your marks are.</p></section>' + stats + homeCards() +
     '<h2>1 · Mode</h2><div class="chips"><button class="chip ' + (!q ? 'on' : '') + '" data-act="kind" data-v="test">📝 Exam Test</button><button class="chip ' + (q ? 'on' : '') + '" data-act="kind" data-v="quiz">💡 Quiz (instant answers)</button></div>' +
     '<h2>2 · Scope</h2><div class="chips"><button class="chip ' + (full ? 'on' : '') + '" data-act="mode" data-v="full">Full paper</button><button class="chip ' + (!full ? 'on' : '') + '" data-act="mode" data-v="sec">Chapter-wise practice</button></div>' +
     '<h2>3 · Year ' + (full ? 'paper' : 'filter') + '</h2><select class="sel" id="ysel" aria-label="Select year">' + opts + '</select>' +
@@ -280,7 +284,7 @@ function tick() {
   if (S.run === 'quiz') return;
   S.left--;
   var el = $('#tm'); if (el) { el.textContent = SET.showTimer ? fmt(S.left) : '⏱ ••'; el.classList.toggle('low', S.left < 300); }
-  if (S.left <= 0) { alert('Time is up!'); submit(); }
+  if (S.left <= 0) { toast('⏰ Time is up!'); submit(); }
 }
 
 /* ---------- question screens ---------- */
@@ -358,7 +362,7 @@ function submit() {
   if (ATT.length > 40) ATT.shift();
   ATT.forEach(function (a, i) { if (i < ATT.length - 5) delete a.full; });   /* keep full question detail for the last 5 attempts only */
   put('wb_att', ATT);
-  render('<div class="card" style="text-align:center"><p class="mu">Your Score</p><div class="big">' + sc.toFixed(2) + ' / ' + S.qs.length + '</div><p class="mu">Time taken: ' + fmt(ATT[ATT.length - 1].used) + (S.fsx + S.tabx ? ' · ⚠️ ' + (S.fsx + S.tabx) + ' focus lapse(s)' : '') + '</p></div>' +
+  render('<div class="card res">' + ring(sc, S.qs.length) + '<p class="mu">Time taken: ' + fmt(ATT[ATT.length - 1].used) + (S.fsx + S.tabx ? ' · ⚠️ ' + (S.fsx + S.tabx) + ' focus lapse(s)' : '') + '</p></div>' +
     Object.keys(st).sort(function (a, b) { return ti(a) - ti(b); }).map(function (k) { var v = st[k]; return '<div class="card"><b>' + (ICON[k] || '') + ' ' + esc(k) + '</b> <span class="mu">✅ ' + v.c + ' · ❌ ' + v.w + ' · ⏭ ' + v.n + '</span><div class="bar" style="margin-bottom:0"><i style="width:' + pct(v.c, v.t) + '%"></i></div></div>'; }).join('') +
     '<div class="row" style="margin:6px 0"><button class="btn" data-act="sheet" data-v="last">📊 Full analysis</button><button class="btn g" data-act="exportq">⬇ Export attempted (CSV)</button><button class="btn g" data-act="home">← Home</button></div>' +
     (mastered ? '<p class="mu">🎉 ' + mastered + ' question(s) mastered and removed from your wrong notebook.</p>' : '') +
@@ -367,6 +371,30 @@ function submit() {
       return '<div class="card"><div class="line" style="padding-top:0"><span class="mu">' + label(q) + ' · Q' + (i + 1) + ' · ⏱ ' + (S.qt[i] || 0) + 's' + (S.fl[i] ? ' · ' + FL[S.fl[i]] : '') + '</span><button class="btn g s" data-act="rsave" data-v="' + i + '">' + (SAV[q._k] && SAV[q._k].b ? '🔖 Saved' : '🔖 Save') + '</button></div><b class="qt">' + q.q + '</b>' +
         q.o.map(function (o, j) { return '<div class="opt ' + (j === q.a ? 'ok' : S.ans[i] === j ? 'bad' : '') + '">' + o + '</div>'; }).join('') + (q.e ? '<div class="expl">💡 ' + q.e + '</div>' : '') + '</div>';
     }).join(''));
+  celebrate(sc / S.qs.length, sc);
+}
+/* ---------- score ring + confetti ---------- */
+function ring(sc, max) {
+  var c = 0, w = 0, n = 0, p = Math.max(0, Math.min(1, sc / max));
+  S.ans.forEach(function (a, i) { if (a === null) n++; else if (a === S.qs[i].a) c++; else w++; });
+  var msg = p >= .75 ? 'Outstanding result!' : p >= .5 ? 'Good going — keep climbing' : p >= .25 ? 'Solid start — review and retry' : 'Every mistake here is a mark saved later';
+  return '<div class="ringw"><svg viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--a)"/><stop offset="1" style="stop-color:var(--b)"/></linearGradient></defs>' +
+    '<circle class="t" cx="60" cy="60" r="52"/><circle class="f" cx="60" cy="60" r="52" style="--o:' + (326.7 * (1 - p)).toFixed(1) + '"/></svg>' +
+    '<div class="ringc"><b id="rnum">' + sc.toFixed(2) + '</b><small>out of ' + max + ' · ' + Math.round(p * 100) + '%</small></div></div>' +
+    '<h3>' + msg + '</h3><div class="rp"><span style="color:#10b981">✅ ' + c + '</span><span style="color:#ef4444">❌ ' + w + '</span><span>⏭ ' + n + '</span></div>';
+}
+function celebrate(p, sc) {
+  var el = $('#rnum'), t0 = performance.now();
+  if (el && SET.motion) (function f(t) { var k = Math.min(1, (t - t0) / 1500); el.textContent = (sc * (1 - Math.pow(1 - k, 3))).toFixed(2); if (k < 1) requestAnimationFrame(f); })(t0);
+  if (p < .25 || !SET.motion || (window.matchMedia && matchMedia('(prefers-reduced-motion:reduce)').matches)) return;
+  var cv = $('#cf'), c = cv.getContext('2d'), W = cv.width = innerWidth, H = cv.height = innerHeight, ps = [], i,
+      cols = ['#7b6cff', '#f2b84b', '#22b8cf', '#f0567a', '#2fbf8f', '#ff8a3d'], N = Math.round(70 + p * 150), st = performance.now();
+  for (i = 0; i < N; i++) ps.push({ x: W / 2 + (Math.random() - .5) * 120, y: H * .3, vx: (Math.random() - .5) * 15, vy: -Math.random() * 15 - 4, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, r: Math.random() * 6, vr: (Math.random() - .5) * .4, c: cols[i % cols.length] });
+  (function loop(t) {
+    c.clearRect(0, 0, W, H);
+    ps.forEach(function (q) { q.vy += .3; q.vx *= .992; q.x += q.vx; q.y += q.vy; q.r += q.vr; c.save(); c.translate(q.x, q.y); c.rotate(q.r); c.fillStyle = q.c; c.fillRect(-q.w / 2, -q.h / 2, q.w, q.h); c.restore(); });
+    if (t - st < 4200) requestAnimationFrame(loop); else c.clearRect(0, 0, W, H);
+  })(st);
 }
 /* export the questions you attempted, with your answers (opens in Excel / Google Sheets) */
 function exportQ() {
