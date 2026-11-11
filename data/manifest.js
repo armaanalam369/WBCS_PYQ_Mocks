@@ -22,7 +22,7 @@ window.RULES = {
     { n: 'Ancient History',            i: '🏺', k: 'Ancient Hist.'  },
     { n: 'Medieval History',           i: '🏰', k: 'Medieval Hist.'  },
     { n: 'Modern History',             i: '📜', k: 'Modern Hist.'  },
-    { n: 'Indian National Movement',   i: '🇮🇳', k: 'INM'  },
+    { n: 'Indian National Movement',   i: '🇮🇳', k: 'Indian National Movement'  },
     { n: 'Indian Geography',           i: '🗺️', k: 'Indian Geog.' },
     { n: 'World & Physical Geography', i: '🌍', k: 'World & Phy Geog.' },
     { n: 'Arts & Culture',             i: '🎭', k: 'Arts & Culture'  },
