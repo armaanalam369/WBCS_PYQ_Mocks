@@ -1,668 +1,390 @@
-/* ============================================================
-   WBCS PYQs — QUIZ ENGINE v3
-   Adding a paper never needs edits here:
-     1. create data/<name>.js calling registerPYQ(year, questions, meta)
-     2. list "<name>" in data/manifest.js:  const PYQ_YEARS = ["2019", "2019-shift2"];
-   meta (all optional): { shift:"Shift 2", name:"...", durationMin:60, marks:{correct:1, wrong:0.25} }
-   question (optional extras): difficulty, tags[], source, verified:false, originalNumber
-   ============================================================ */
-"use strict";
+/* =====================================================================
+   WBCS Prelims Mock Test Series — app.js
+   Needs: data/manifest.js (window.RULES, window.PAPER_LIST)
+          data/<year>.js   (window.PAPERS[year])  — loaded on demand
+   ===================================================================== */
+(function () {
+'use strict';
+var $ = function (s) { return document.querySelector(s); };
+window.PAPERS = window.PAPERS || {};
 
-const CONFIG = {
-  sectionOrder: ["English", "Ancient History", "Medieval History", "Modern History", "Indian National Movement", "Indian Geography",
-    "World & Physical Geography", "Arts & Culture", "West Bengal Specific", "Indian Polity", "Indian Economy", "Physics", "Chemistry",
-    "Biology", "Environmental Studies", "Static GK", "Current Affairs", "General Mental Ability"],
-  defaultMarks: { correct: 1, wrong: 0.25 },
-  defaultDurationMin: 60,
-  dailyGoal: 25,                    // questions per day
-  strongFrom: 75, weakBelow: 50, minAttemptsForLabel: 5,
-  srsDays: [1, 3, 7, 14, 30]        // spaced-repetition gaps for questions you got wrong
-};
-const K = { hist: "pyq_history_v2", oldHist: "pyq_history_v1", oldTheme: "pyq_theme_v1", prefs: "pyq_prefs_v2",
-  bm: "pyq_bookmarks_v2", notes: "pyq_notes_v2", srs: "pyq_srs_v2", days: "pyq_days_v2", prog: "pyq_progress_v2", ver: "pyq_schema" };
-
-/* ---------- utilities ---------- */
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const rich = s => esc(s).replace(/\n/g, "<br>");
-const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
-const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast("Storage is full or blocked, so progress may not be saved."); } };
-const fmt = s => `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
-const clock = s => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-const today = () => new Date().toLocaleDateString("en-CA");
-const num = (v, d) => { const n = parseFloat(v); return isNaN(n) ? d : n; };
-const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-const normalize = t => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
-const KEYL = "ABCD";
-
-function toast(msg) {
-  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; $("toasts").appendChild(t);
-  setTimeout(() => t.classList.add("out"), 2600); setTimeout(() => t.remove(), 3000);
+/* ---------- config (falls back to a tiny demo if manifest.js is missing) ---------- */
+var R = window.RULES, PL = window.PAPER_LIST, demo = !(R && PL && PL.length);
+if (demo) {
+  R = { examName: 'WBCS Prelims', fullMinutes: 120, negative: 0.25,
+        topics: [{ n: 'English', i: '🔤' }, { n: 'Indian Polity', i: '🏛️' }, { n: 'General Mental Ability', i: '🧠' }] };
+  PL = [{ year: 'Demo', file: '' }];
+  window.PAPERS.Demo = { year: 'Demo', questions: [
+    { s: 'English', c: 'Synonyms', q: 'Synonym of "RAPID"?', o: ['Slow', 'Quick', 'Late', 'Weak'], a: 1, e: 'Rapid means quick.' },
+    { s: 'Indian Polity', c: 'Constitution', q: 'Who chaired the Drafting Committee of the Constituent Assembly?', o: ['Nehru', 'Gandhi', 'B. R. Ambedkar', 'Patel'], a: 2, e: 'Dr B. R. Ambedkar chaired the Drafting Committee.' },
+    { s: 'General Mental Ability', c: 'Number Series', q: 'Next term: 2, 6, 12, 20, ?', o: ['28', '30', '32', '36'], a: 1, e: 'Differences are 4, 6, 8, 10 → 30.' }] };
 }
-function confirmModal(title, html, ok = "Confirm", cancel = "Cancel") {
-  return new Promise(res => {
-    const m = $("modal");
-    m.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true"><h3>${esc(title)}</h3><div>${html}</div>
-      <div class="modal-actions">${cancel ? `<button class="btn" data-m="0">${esc(cancel)}</button>` : ""}<button class="btn primary" data-m="1">${esc(ok)}</button></div></div>`;
-    m.classList.remove("hidden");
-    m.onclick = e => { const b = e.target.closest("[data-m]"); if (!b && e.target !== m) return; m.classList.add("hidden"); m.onclick = null; res(!!b && b.dataset.m === "1"); };
+var TOPICS = R.topics.map(function (t) { return t.n; }), ICON = {};
+R.topics.forEach(function (t) { ICON[t.n] = t.i; });
+var ti = function (s) { var i = TOPICS.indexOf(s); return i < 0 ? 999 : i; };
+var app = $('#app'), root = document.documentElement;
+
+/* ---------- storage ---------- */
+function put(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function get(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
+var SET = Object.assign({ font: 1, motion: true, showTimer: true, autoNext: false, shuffleQ: false, shuffleO: false,
+  confirmSubmit: true, autoWrong: true, haptic: true, wake: false, defMins: 30, defNeg: true }, get('wb_set', {}));
+var ATT = get('wb_att', []), SAV = get('wb_sav', {});
+root.dataset.theme = get('wb_t', 'dark'); root.dataset.pal = get('wb_p', 'violet');
+var S = { kind: 'test', run: 'test', el: 0, view: 'home', year: null, mode: 'full', secs: {}, neg: SET.defNeg, mins: SET.defMins,
+  qs: [], ans: [], qt: [], mk: {}, cur: 0, left: 0, total: 0, t: null, grid: false, tab: 'last', sf: 'all', wl: null, src: '' };
+TOPICS.forEach(function (t) { S.secs[t] = false; });
+function prefs() { root.style.setProperty('--fs', ['14.5px', '16px', '18px'][SET.font]); root.dataset.motion = SET.motion ? 'on' : 'off'; }
+function saveSet() { put('wb_set', SET); prefs(); }
+prefs();
+
+/* ---------- helpers ---------- */
+var pad = function (n) { return String(n).padStart(2, '0'); };
+var fmt = function (s) { s = Math.max(0, s); return pad(Math.floor(s / 60)) + ':' + pad(s % 60); };
+var pct = function (a, b) { return b ? Math.round(a / b * 100) : 0; };
+var tone = function (p) { return p >= 75 ? '#10b981' : p >= 50 ? '#f59e0b' : '#ef4444'; };
+var lab = function (p) { return p >= 75 ? 'Strong' : p >= 50 ? 'Average' : 'Weak'; };
+var esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+function bar(p) { return '<div class="bar"><i style="width:' + p + '%;background:' + tone(p) + '"></i></div>'; }
+function render(h, keep) {
+  var y = window.scrollY;
+  app.innerHTML = h;
+  if (keep) { window.scrollTo(0, y); return; }
+  app.classList.remove('in'); void app.offsetWidth; app.classList.add('in'); window.scrollTo(0, 0);
+}
+function sw(on, act, v) { return '<button class="sw ' + (on ? 'on' : '') + '" role="switch" aria-checked="' + !!on + '" data-act="' + act + '" data-v="' + esc(v || '') + '"><i></i></button>'; }
+function fabs(t) { $('#bGrid').style.display = t ? 'block' : 'none'; $('#bExit').style.display = t ? 'block' : 'none'; }
+function buzz() { if (SET.haptic && navigator.vibrate) try { navigator.vibrate(10); } catch (e) {} }
+function ask(m) { return SET.confirmSubmit ? confirm(m) : true; }
+function getWake() { if (SET.wake && navigator.wakeLock) navigator.wakeLock.request('screen').then(function (l) { S.wl = l; }).catch(function () {}); }
+function relWake() { try { if (S.wl) S.wl.release(); } catch (e) {} S.wl = null; }
+function shuf(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function label(q) { return (ICON[q.s] || '') + ' ' + esc(q.s) + (q.c ? ' · ' + esc(q.c) : ''); }
+/* saved questions */
+function keep(q, f) {
+  var e = SAV[q._k] || (SAV[q._k] = { k: q._k, s: q.s, c: q.c || '', q: q.q, o: q.o, a: q.a, e: q.e || '', src: q._src || '' });
+  e[f] = true;
+}
+function persist() { Object.keys(SAV).forEach(function (k) { if (!SAV[k].b && !SAV[k].w) delete SAV[k]; }); put('wb_sav', SAV); }
+
+/* ---------- home ---------- */
+function home(keepScroll) {
+  if (S.mode === 'saved') S.mode = 'full';
+  if (S.mode === 'full' && S.year === 'all') S.year = null;
+  S.view = 'home'; clearInterval(S.t); relWake(); fabs(false); closeGrid();
+  var q = S.kind === 'quiz', ys = PL.slice().sort(function (a, b) { return (b.year - a.year) || 0; });
+  var years = '<div class="chips">' + ys.map(function (p) {
+    return '<button class="chip ' + (String(S.year) === String(p.year) ? 'on' : '') + '" data-act="year" data-v="' + esc(p.year) + '">' + esc(p.year) + '</button>';
+  }).join('') + (S.mode === 'sec' && ys.length > 1 ? '<button class="chip ' + (S.year === 'all' ? 'on' : '') + '" data-act="year" data-v="all">📚 All years</button>' : '') + '</div>';
+  var card = '';
+  if (!q && S.mode === 'full') {
+    card = '<b>Standard exam pattern</b><p class="mu" style="margin-top:4px">Fixed ' + R.fullMinutes + ' minutes · all topics · negative marking of ' + R.negative.toFixed(2) + ' per wrong answer.</p>';
+  } else {
+    if (q) card += '<b>Instant-feedback quiz</b><p class="mu" style="margin:4px 0 8px">See the right answer and explanation right after each question. No timer.</p>';
+    if (S.mode === 'sec') {
+      var n = TOPICS.filter(function (t) { return S.secs[t]; }).length;
+      card += '<div class="line" style="padding-top:0"><b>Choose topics</b><span class="row"><button class="btn g s" data-act="topall">All</button><button class="btn g s" data-act="topnone">None</button></span></div>' +
+        '<p class="mu">' + n + ' of ' + TOPICS.length + ' selected</p><div class="tgrid">' +
+        TOPICS.map(function (t) { return '<button class="chip ' + (S.secs[t] ? 'on' : '') + '" data-act="sec" data-v="' + esc(t) + '">' + ICON[t] + ' ' + esc(t) + '</button>'; }).join('') + '</div>';
+    }
+    card += '<div class="line"><span>Negative marking</span>' + sw(S.neg, 'neg') + '</div>';
+    if (!q) card += '<div class="line"><span>Time (minutes)</span><input type="number" id="mins" min="1" max="180" value="' + S.mins + '"></div>';
+  }
+  render('<h1>Practice smarter 🚀</h1><p class="mu">West Bengal Civil Service (WBCS) Prelims · Previous Year Questions</p>' +
+    '<h2>1 · Year</h2>' + years +
+    '<h2>2 · Mode</h2><div class="chips"><button class="chip ' + (!q ? 'on' : '') + '" data-act="kind" data-v="test">📝 Exam Test</button><button class="chip ' + (q ? 'on' : '') + '" data-act="kind" data-v="quiz">💡 Quiz (instant answers)</button></div>' +
+    '<h2>3 · Scope</h2><div class="chips"><button class="chip ' + (S.mode === 'full' ? 'on' : '') + '" data-act="mode" data-v="full">Full paper</button><button class="chip ' + (S.mode === 'sec' ? 'on' : '') + '" data-act="mode" data-v="sec">Topic-wise (Custom)</button></div>' +
+    '<div class="card" style="margin-top:12px">' + card + '</div>' +
+    '<button class="btn" data-act="start" style="width:100%;padding:16px">' + (q ? 'Start Quiz →' : 'Start Test →') + '</button>' +
+    (demo ? '<p class="note">Demo mode: <b>data/manifest.js</b> was not found, so a built-in sample is shown. Keep index.html next to the data folder to use your own papers.</p>' : ''),
+    keepScroll);
+}
+document.addEventListener('input', function (e) {
+  if (e.target.id === 'mins') S.mins = +e.target.value || 1;
+  if (e.target.id === 'dm') { SET.defMins = Math.max(1, Math.min(180, +e.target.value || 30)); S.mins = SET.defMins; saveSet(); }
+});
+
+/* ---------- start a test ---------- */
+function load(p) {
+  return new Promise(function (res, rej) {
+    var k = String(p.year);
+    if (window.PAPERS[k]) return res(window.PAPERS[k]);
+    var s = document.createElement('script'); s.src = p.file;
+    s.onload = function () { window.PAPERS[k] ? res(window.PAPERS[k]) : rej(); };
+    s.onerror = rej; document.body.appendChild(s);
   });
 }
-
-/* ---------- 1. DATA REGISTRATION ---------- */
-const PAPERS = [], ALL_QUESTIONS = [], LOAD_ERRORS = [], QMAP = new Map();
-function registerPYQ(year, questions, meta = {}) {
-  const shift = meta.shift || "";
-  const paperId = shift ? `${year}-${slug(shift)}` : String(year);
-  const paper = { id: paperId, year: parseInt(year, 10) || year, shift,
-    name: meta.name || `${year}${shift ? " " + shift : ""} PYQ`,
-    durationMin: meta.durationMin || CONFIG.defaultDurationMin,
-    marks: { ...CONFIG.defaultMarks, ...(meta.marks || {}) }, count: questions.length };
-  PAPERS.push(paper);
-  questions.forEach((q, i) => {
-    const n = q.originalNumber || (i + 1);
-    ALL_QUESTIONS.push({ id: `${paperId}-Q${String(n).padStart(3, "0")}`, paperId, paperName: paper.name, year: paper.year, originalNumber: n,
-      section: q.section, question: q.question, options: q.options, correctAnswer: q.correctAnswer, explanation: q.explanation || "",
-      difficulty: q.difficulty || "Medium", tags: q.tags || [], source: q.source || "", verified: q.verified !== false, repeats: [] });
-  });
-}
-function loadDataFiles(files, done) {
-  let i = 0;
-  (function next() {
-    if (i >= files.length) return done();
-    const s = document.createElement("script"); s.src = `data/${files[i]}.js`;
-    s.onload = () => { i++; next(); };
-    s.onerror = () => { LOAD_ERRORS.push(files[i]); i++; next(); };
-    document.head.appendChild(s);
-  })();
-}
-function getSections() {
-  const seen = []; ALL_QUESTIONS.forEach(q => { if (!seen.includes(q.section)) seen.push(q.section); });
-  const pref = CONFIG.sectionOrder.filter(s => seen.includes(s));
-  return [...pref, ...seen.filter(s => !pref.includes(s))];
-}
-const paperById = id => PAPERS.find(p => p.id === id);
-const sortPool = pool => { const ix = id => PAPERS.findIndex(p => p.id === id); return [...pool].sort((a, b) => ix(a.paperId) - ix(b.paperId) || a.originalNumber - b.originalNumber); };
-
-/* ---------- 2. REPEATS + VALIDATION ---------- */
-/* Repeated questions are collected silently into the "Repeated Questions" category (no flags shown on questions). */
-function detectRepeats() {
-  const by = detectRepeatsMap();
-  by.forEach(g => { if (g.length > 1) g.forEach(q => { q.repeats = g.filter(o => o.id !== q.id).map(o => ({ paperName: o.paperName, originalNumber: o.originalNumber })); }); });
-  return by;
-}
-const detectRepeatsMap = () => { const by = new Map(); ALL_QUESTIONS.forEach(q => { const k = normalize(q.question); if (!by.has(k)) by.set(k, []); by.get(k).push(q); }); return by; };
-function repeatedPool() {
-  const seen = new Set(), out = [];
-  ALL_QUESTIONS.forEach(q => { if (!q.repeats.length) return; const k = normalize(q.question); if (!seen.has(k)) { seen.add(k); out.push(q); } });
-  return out;
-}
-let VALIDATION = { errors: [], warns: [] };
-function validateDataset() {
-  const errors = [], warns = [], ids = new Set();
-  ALL_QUESTIONS.forEach(q => {
-    if (ids.has(q.id)) errors.push(`Duplicate id ${q.id}`); ids.add(q.id);
-    if (!q.section) errors.push(`${q.id}: missing section`);
-    if (!q.question) errors.push(`${q.id}: missing question text`);
-    if (!Array.isArray(q.options) || q.options.length !== 4) errors.push(`${q.id}: needs exactly 4 options`);
-    if (!Number.isInteger(q.correctAnswer) || q.correctAnswer < 0 || q.correctAnswer > 3) errors.push(`${q.id}: correctAnswer must be 0–3`);
-    if (!q.explanation) warns.push(`${q.id}: no explanation`);
-    if (!q.verified) warns.push(`${q.id}: answer key marked unverified`);
-  });
-  PAPERS.forEach(p => {
-    const seen = new Map();
-    ALL_QUESTIONS.filter(q => q.paperId === p.id).forEach(q => { const k = normalize(q.question); if (seen.has(k)) warns.push(`${q.id}: same text as ${seen.get(k)} in the same paper`); else seen.set(k, q.id); });
-  });
-  LOAD_ERRORS.forEach(f => errors.push(`Could not load data/${f}.js (check the file name in manifest.js)`));
-  return { errors, warns };
-}
-
-/* ---------- 3. STORAGE, PREFS, MIGRATION ---------- */
-const getHistory = () => load(K.hist, []);
-function migrate() {
-  if (!localStorage.getItem(K.hist) && localStorage.getItem(K.oldHist)) save(K.hist, load(K.oldHist, []));
-  const t = localStorage.getItem(K.oldTheme);
-  if (t && !localStorage.getItem(K.prefs)) save(K.prefs, { theme: t, font: 1 });
-  localStorage.setItem(K.ver, "3");
-}
-let prefs = { theme: null, font: 1, examDate: null };
-function applyPrefs() {
-  prefs = { ...prefs, ...load(K.prefs, {}) };
-  const dark = (prefs.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
-  document.body.classList.toggle("dark", dark);
-  $("theme-toggle").textContent = dark ? "Light" : "Dark";
-  document.documentElement.style.fontSize = (16 * prefs.font) + "px";
-}
-const setPref = (k, v) => { prefs[k] = v; save(K.prefs, prefs); applyPrefs(); };
-
-/* ---------- 4. DERIVED STATS ---------- */
-const pid = h => h.paperId || (h.year !== undefined && h.year !== null ? String(h.year) : null);
-function latestStatuses() {
-  const m = new Map();
-  getHistory().forEach(r => {
-    const om = new Map((r.optionOrder || []).map(o => [o.id, o]));
-    (r.questionIds || []).forEach(id => {
-      if (m.has(id)) return;
-      const a = r.answers?.[id], o = om.get(id);
-      m.set(id, a === undefined ? "unanswered" : (o && a === o.correctAnswer ? "correct" : "incorrect"));
+async function start() {
+  var secs = TOPICS.filter(function (t) { return S.secs[t]; });
+  if (S.mode === 'sec' && !secs.length) return alert('Select at least one topic.');
+  var list = S.year === 'all' ? PL : PL.filter(function (p) { return String(p.year) === String(S.year); });
+  if (!list.length) return alert('Please choose a year.');
+  var papers;
+  try { papers = await Promise.all(list.map(load)); } catch (e) { return alert('Could not load a paper file. Check the paths in data/manifest.js.'); }
+  var qs = [];
+  papers.forEach(function (p, pi) {
+    p.questions.forEach(function (q, i) {
+      if (S.mode === 'full' || secs.indexOf(q.s) > -1) qs.push(Object.assign({}, q, { _k: list[pi].year + '#' + i, _src: R.examName + ' ' + list[pi].year }));
     });
   });
-  return m;
+  if (!qs.length) return alert('No questions found for this selection.');
+  if (list.length > 1) qs.sort(function (a, b) { return ti(a.s) - ti(b.s); });
+  S.src = list.length > 1 ? R.examName + ' · All years' : R.examName + ' ' + list[0].year;
+  begin(qs, S.kind === 'quiz' ? 0 : (S.mode === 'full' ? R.fullMinutes : Math.max(1, S.mins)) * 60);
 }
-function sectionStats() {
-  const s = {};
-  getHistory().forEach(r => Object.entries(r.sectionBreakdown || {}).forEach(([k, b]) => {
-    s[k] = s[k] || { total: 0, attempted: 0, correct: 0, timeSec: 0 };
-    s[k].total += b.total; s[k].attempted += b.attempted; s[k].correct += b.correct; s[k].timeSec += b.timeSec || 0;
-  }));
+function begin(qs, total, kind) {
+  S.run = kind || S.kind;
+  if (SET.shuffleQ) { var g = {}, o = []; qs.forEach(function (q) { if (!g[q.s]) { g[q.s] = []; o.push(q.s); } g[q.s].push(q); }); qs = []; o.forEach(function (s) { qs = qs.concat(shuf(g[s])); }); }
+  if (SET.shuffleO) qs = qs.map(function (q) { var ord = shuf(q.o.map(function (_, i) { return i; })); return Object.assign({}, q, { o: ord.map(function (i) { return q.o[i]; }), a: ord.indexOf(q.a) }); });
+  S.qs = qs; S.ans = qs.map(function () { return null; }); S.qt = qs.map(function () { return 0; }); S.mk = {};
+  S.cur = 0; S.total = total; S.left = total; S.el = 0;
+  clearInterval(S.t); S.t = setInterval(tick, 1000); getWake(); fabs(true); test();
+}
+function tick() {
+  S.el++; if (S.view === 'test') S.qt[S.cur]++;
+  if (S.run === 'quiz') return;
+  S.left--;
+  var el = $('#tm'); if (el) { el.textContent = SET.showTimer ? fmt(S.left) : '⏱ ••'; el.classList.toggle('low', S.left < 300); }
+  if (S.left <= 0) { alert('Time is up!'); submit(); }
+}
+
+/* ---------- question screens ---------- */
+function tchips(q) {
+  var secs = []; S.qs.forEach(function (x) { if (secs.indexOf(x.s) < 0) secs.push(x.s); });
+  return '<div class="chips sm tscroll">' + secs.map(function (s) {
+    return '<button class="chip ' + (s === q.s ? 'on' : '') + '" data-act="secjump" data-v="' + esc(s) + '">' + (ICON[s] || '') + ' ' + esc(s) + '</button>';
+  }).join('') + '</div>';
+}
+function centerChip() { var c = $('.tscroll .on'); if (c) { var p = c.parentNode; p.scrollLeft = c.offsetLeft - p.clientWidth / 2 + c.clientWidth / 2; } }
+function quizView() {
+  var q = S.qs[S.cur], a = S.ans[S.cur], done = a !== null, c = 0, w = 0, sv = SAV[q._k] && SAV[q._k].b;
+  S.ans.forEach(function (x, i) { if (x !== null) { x === S.qs[i].a ? c++ : w++; } });
+  render('<div class="top"><span class="mu">Q ' + (S.cur + 1) + ' / ' + S.qs.length + '</span><span class="timer">✅ ' + c + ' · ❌ ' + w + '</span></div>' +
+    '<div class="bar"><i style="width:' + ((S.cur + 1) / S.qs.length * 100) + '%"></i></div>' + tchips(q) +
+    '<div class="card"><span class="tag">' + label(q) + '</span><div style="height:8px"></div><b class="qt">' + q.q + '</b>' +
+    q.o.map(function (o, i) { return '<button class="opt ' + (done ? (i === q.a ? 'ok' : i === a ? 'bad' : '') : '') + '" data-act="opt" data-v="' + i + '">' + 'ABCD'.charAt(i) + '. ' + o + '</button>'; }).join('') +
+    (done ? '<div class="expl"><b>' + (a === q.a ? '✅ Correct!' : '❌ Incorrect') + '</b> · Answer: ' + 'ABCD'.charAt(q.a) + '<br>💡 ' + (q.e || 'No explanation added for this question yet.') + '</div>' : '') + '</div>' +
+    '<div class="row"><button class="btn g" data-act="prev">←</button><button class="btn g" data-act="save">' + (sv ? '🔖 Saved' : '🔖 Save') + '</button><button class="btn" data-act="next" style="margin-left:auto">' + (S.cur === S.qs.length - 1 ? 'Finish ✓' : 'Next →') + '</button></div>');
+  centerChip(); if (S.grid) fillGrid();
+}
+function qcls(i) {
+  if (S.run === 'quiz') return S.ans[i] === null ? '' : (S.ans[i] === S.qs[i].a ? 'ok' : 'bad');
+  return (S.ans[i] !== null ? 'ans' : '') + ' ' + (S.mk[i] ? 'mk' : '');
+}
+function test() {
+  S.view = 'test'; if (S.run === 'quiz') return quizView();
+  var q = S.qs[S.cur], done = S.ans.filter(function (a) { return a !== null; }).length, sv = SAV[q._k] && SAV[q._k].b;
+  render('<div class="top"><span class="mu">Q ' + (S.cur + 1) + ' / ' + S.qs.length + ' · ' + done + ' answered</span><span class="timer ' + (S.left < 300 ? 'low' : '') + '" id="tm">' + (SET.showTimer ? fmt(S.left) : '⏱ ••') + '</span></div>' +
+    '<div class="bar"><i style="width:' + ((S.cur + 1) / S.qs.length * 100) + '%"></i></div>' + tchips(q) +
+    '<div class="card"><span class="tag">' + label(q) + '</span><div style="height:8px"></div><b class="qt">' + q.q + '</b>' +
+    q.o.map(function (o, i) { return '<button class="opt ' + (S.ans[S.cur] === i ? 'sel' : '') + '" data-act="opt" data-v="' + i + '">' + 'ABCD'.charAt(i) + '. ' + o + '</button>'; }).join('') + '</div>' +
+    '<div class="row"><button class="btn g" data-act="prev">←</button><button class="btn g" data-act="mark">' + (S.mk[S.cur] ? '★ Marked' : '☆ Mark') + '</button><button class="btn g" data-act="save">' + (sv ? '🔖 Saved' : '🔖 Save') + '</button><button class="btn g" data-act="clear">Clear</button><button class="btn" data-act="next" style="margin-left:auto">' + (S.cur === S.qs.length - 1 ? 'Submit ✓' : 'Next →') + '</button></div>');
+  centerChip(); if (S.grid) fillGrid();
+}
+function fillGrid() {
+  var a = S.ans.filter(function (x) { return x !== null; }).length, m = Object.keys(S.mk).length;
+  $('#drawer').innerHTML = '<b>Questions</b><p class="mu" style="margin-top:4px">🟩 ' + a + ' answered · 🟧 ' + m + ' marked · ' + (S.qs.length - a) + ' left</p><div class="grid">' +
+    S.qs.map(function (_, i) { return '<button class="qn ' + qcls(i) + ' ' + (i === S.cur ? 'cur' : '') + '" data-act="jump" data-v="' + i + '">' + (i + 1) + '</button>'; }).join('') +
+    '</div><button class="btn" data-act="submit" style="width:100%">' + (S.run === 'quiz' ? 'Finish Quiz' : 'Submit Test') + '</button>';
+}
+function openGrid() { S.grid = true; fillGrid(); $('#drawer').classList.add('show'); $('#shade').classList.add('show'); }
+function closeGrid() { S.grid = false; $('#drawer').classList.remove('show'); $('#shade').classList.remove('show'); }
+
+/* ---------- submit + result ---------- */
+function submit() {
+  clearInterval(S.t); relWake(); fabs(false); closeGrid(); S.view = 'result';
+  var neg = (S.run === 'test' && S.mode === 'full') ? R.negative : (S.neg ? R.negative : 0), st = {}, det = [], sc = 0;
+  S.qs.forEach(function (q, i) {
+    var r = S.ans[i] === null ? 'n' : S.ans[i] === q.a ? 'c' : 'w';
+    var x = st[q.s] = st[q.s] || { c: 0, w: 0, n: 0, t: 0 };
+    x.t++; x[r]++; if (r === 'c') sc++; if (r === 'w') sc -= neg;
+    det.push({ s: q.s, r: r, t: S.qt[i] || 0 });
+    if (r === 'w' && (SET.autoWrong || S.mode === 'saved')) keep(q, 'w');
+    if (r === 'c' && S.mode === 'saved' && SAV[q._k]) SAV[q._k].w = false;
+  });
+  persist();
+  ATT.push({ ts: Date.now(), src: S.mode === 'saved' ? 'Saved-question practice' : S.src + (S.run === 'quiz' ? ' · Quiz' : ''), mode: S.mode, sc: sc, max: S.qs.length, neg: neg, used: S.el, total: S.total, secs: st, det: det });
+  if (ATT.length > 40) ATT.shift(); put('wb_att', ATT);
+  render('<div class="card" style="text-align:center"><p class="mu">Your Score</p><div class="big">' + sc.toFixed(2) + ' / ' + S.qs.length + '</div><p class="mu">Time taken: ' + fmt(ATT[ATT.length - 1].used) + '</p></div>' +
+    Object.keys(st).sort(function (a, b) { return ti(a) - ti(b); }).map(function (k) { var v = st[k]; return '<div class="card"><b>' + (ICON[k] || '') + ' ' + esc(k) + '</b> <span class="mu">✅ ' + v.c + ' · ❌ ' + v.w + ' · ⏭ ' + v.n + '</span><div class="bar" style="margin-bottom:0"><i style="width:' + pct(v.c, v.t) + '%"></i></div></div>'; }).join('') +
+    '<div class="row" style="margin:6px 0"><button class="btn" data-act="sheet" data-v="last">📊 Full analysis</button><button class="btn g" data-act="home">← Home</button></div>' +
+    (S.mode !== 'saved' && SET.autoWrong ? '<p class="mu">Wrong answers were added to your 🔖 Saved notebook.</p>' : '') +
+    '<h2>Review</h2>' + S.qs.map(function (q, i) {
+      return '<div class="card"><div class="line" style="padding-top:0"><span class="mu">' + label(q) + ' · Q' + (i + 1) + '</span><button class="btn g s" data-act="rsave" data-v="' + i + '">' + (SAV[q._k] && SAV[q._k].b ? '🔖 Saved' : '🔖 Save') + '</button></div><b class="qt">' + q.q + '</b>' +
+        q.o.map(function (o, j) { return '<div class="opt ' + (j === q.a ? 'ok' : S.ans[i] === j ? 'bad' : '') + '">' + o + '</div>'; }).join('') + (q.e ? '<div class="expl">💡 ' + q.e + '</div>' : '') + '</div>';
+    }).join(''));
+}
+
+/* ---------- analytics sheet ---------- */
+function stat(l, v) { return '<div class="stat"><span class="mu">' + l + '</span><b>' + v + '</b></div>'; }
+function empty(i, t, d) { return '<div class="empty"><b>' + i + '</b><div style="color:var(--tx);font-weight:700">' + t + '</div><div>' + d + '</div></div>'; }
+function trow(k, v, btn) {
+  var p = pct(v.c, v.t);
+  return '<div class="card"><div class="line" style="padding:0"><b>' + (ICON[k] || '') + ' ' + esc(k) + '</b><b style="color:' + tone(p) + '">' + p + '% · ' + lab(p) + '</b></div>' +
+    '<div class="line" style="padding:4px 0 0"><span class="mu">' + v.c + '/' + v.t + ' correct · ' + v.w + ' wrong · ' + v.n + ' skipped</span>' +
+    (btn ? '<button class="btn g s" data-act="ptopic" data-v="' + esc(k) + '">Practise</button>' : '') + '</div>' + bar(p) + '</div>';
+}
+function agg() {
+  var s = {};
+  ATT.forEach(function (a) { Object.keys(a.secs).forEach(function (k) { var v = a.secs[k], x = s[k] || (s[k] = { c: 0, w: 0, n: 0, t: 0 }); x.c += v.c; x.w += v.w; x.n += v.n; x.t += v.t; }); });
   return s;
 }
-function streaks(days) {
-  const ds = Object.keys(days).filter(d => days[d] > 0).sort(); let best = 0, run = 0, prev = null;
-  ds.forEach(d => { run = prev && Math.round((new Date(d) - new Date(prev)) / 864e5) === 1 ? run + 1 : 1; best = Math.max(best, run); prev = d; });
-  const y = new Date(Date.now() - 864e5).toLocaleDateString("en-CA");
-  return { current: prev === today() || prev === y ? run : 0, best };
+function weakFirst(g) { return Object.keys(g).sort(function (a, b) { return pct(g[a].c, g[a].t) - pct(g[b].c, g[b].t) || ti(a) - ti(b); }); }
+function tLast() {
+  var a = ATT[ATT.length - 1]; if (!a) return empty('📊', 'No test yet', 'Finish a test and its full analysis shows up here.');
+  var c = 0, w = 0;
+  Object.keys(a.secs).forEach(function (k) { c += a.secs[k].c; w += a.secs[k].w; });
+  var slow = a.det.map(function (d, i) { return { i: i, t: d.t, s: d.s }; }).sort(function (x, y) { return y.t - x.t; }).slice(0, 3);
+  return '<p class="mu" style="margin-bottom:10px">' + esc(a.src) + ' · ' + new Date(a.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</p>' +
+    '<div class="stats">' + stat('Score', a.sc.toFixed(2) + ' / ' + a.max) + stat('Accuracy', pct(c, c + w) + '%') + stat('Attempted', (c + w) + ' / ' + a.max) +
+    stat('Negative marks', '−' + (w * (a.neg || 0)).toFixed(2)) + stat('Avg time / Q', Math.round(a.used / a.max) + 's') + stat('Time taken', fmt(a.used)) + '</div>' +
+    '<div class="sec">Question map</div><div class="strip">' + a.det.map(function (d, i) { return '<span style="background:' + (d.r === 'c' ? '#10b981' : d.r === 'w' ? '#ef4444' : '#6b7280') + '">' + (i + 1) + '</span>'; }).join('') + '</div>' +
+    '<div class="sec">Topic-wise (this test)</div>' + Object.keys(a.secs).sort(function (x, y) { return ti(x) - ti(y); }).map(function (k) { return trow(k, a.secs[k]); }).join('') +
+    '<div class="sec">Slowest questions</div>' + slow.map(function (x) { return '<div class="line"><span>Q' + (x.i + 1) + ' <span class="tag">' + esc(x.s) + '</span></span><b>' + x.t + 's</b></div>'; }).join('');
 }
-function addDay(n) { const d = load(K.days, {}); d[today()] = (d[today()] || 0) + n; save(K.days, d); }
-function badgeDefs() {
-  const h = getHistory(), st = streaks(load(K.days, {})), answered = h.reduce((s, r) => s + (r.attempted || 0), 0);
-  return [
-    { id: "first", name: "First steps", desc: "Finish a test", ok: h.length >= 1 },
-    { id: "c100", name: "Centurion", desc: "Answer 100 questions", ok: answered >= 100 },
-    { id: "sharp", name: "Sharp shooter", desc: "Score 80%+ on a test of 20+ questions", ok: h.some(r => r.scorePercent >= 80 && r.totalQuestions >= 20) },
-    { id: "full", name: "Full paper", desc: "Finish a whole paper in exam mode", ok: h.some(r => ["paper", "pyq"].includes(r.type) && (r.mode || "exam") === "exam" && r.totalQuestions >= (paperById(pid(r))?.count ?? 1e9)) },
-    { id: "s3", name: "On a roll", desc: "3-day streak", ok: st.best >= 3 },
-    { id: "s7", name: "Week warrior", desc: "7-day streak", ok: st.best >= 7 }
-  ];
+function streak() {
+  var d = {}; ATT.forEach(function (a) { d[new Date(a.ts).toDateString()] = 1; });
+  var n = 0, x = new Date(); if (!d[x.toDateString()]) x.setDate(x.getDate() - 1);
+  while (d[x.toDateString()]) { n++; x.setDate(x.getDate() - 1); } return n;
 }
-function updateSRS(qs, answers) {
-  const srs = load(K.srs, {}), now = Date.now();
-  qs.forEach(q => {
-    const a = answers[q.id]; if (a === undefined) return;
-    if (a !== q.correctAnswer) srs[q.id] = { box: 0, due: now + CONFIG.srsDays[0] * 864e5 };
-    else if (srs[q.id]) { const b = srs[q.id].box + 1; if (b >= CONFIG.srsDays.length) delete srs[q.id]; else srs[q.id] = { box: b, due: now + CONFIG.srsDays[b] * 864e5 }; }
-  });
-  save(K.srs, srs);
+function spark() {
+  var p = ATT.slice(-12).map(function (a) { return Math.max(0, Math.min(100, a.sc / a.max * 100)); });
+  if (p.length < 2) return '<p class="mu">Take 2+ tests to see your trend.</p>';
+  return '<svg viewBox="0 0 200 50" preserveAspectRatio="none" style="width:100%;height:70px"><polyline points="' + p.map(function (v, i) { return (i * 200 / (p.length - 1)).toFixed(1) + ',' + (48 - v * .46).toFixed(1); }).join(' ') + '" fill="none" style="stroke:var(--a)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>';
 }
-const dueQuestions = () => { const srs = load(K.srs, {}), now = Date.now(); return Object.entries(srs).filter(([id, v]) => v.due <= now && QMAP.has(id)).map(([id]) => QMAP.get(id)); };
-const mistakeQuestions = () => [...latestStatuses()].filter(([id, s]) => s === "incorrect" && QMAP.has(id)).map(([id]) => QMAP.get(id));
-const savedQuestions = () => Object.keys(load(K.bm, {})).filter(id => QMAP.has(id)).map(id => QMAP.get(id));
+function tAll() {
+  if (!ATT.length) return empty('📈', 'No data yet', 'Your overall performance appears after your first test.');
+  var g = agg(), c = 0, w = 0, t = 0, q = 0, best = 0, sum = 0;
+  Object.keys(g).forEach(function (k) { c += g[k].c; w += g[k].w; });
+  ATT.forEach(function (a) { var p = a.sc / a.max * 100; sum += p; if (p > best) best = p; t += a.used; q += a.max; });
+  var weak = weakFirst(g).slice(0, 3);
+  return '<div class="stats">' + stat('Tests taken', ATT.length) + stat('Avg score', Math.round(sum / ATT.length) + '%') + stat('Best score', Math.round(best) + '%') + stat('Accuracy', pct(c, c + w) + '%') + stat('Questions solved', q) + stat('Study streak', '🔥 ' + streak() + ' day' + (streak() === 1 ? '' : 's')) + '</div>' +
+    '<div class="card"><span class="mu">Score trend (last 12 tests)</span>' + spark() + '</div>' +
+    '<div class="sec">Focus on these topics</div>' + weak.map(function (k) { return trow(k, g[k], true); }).join('') +
+    '<div class="sec">Recent tests</div>' + ATT.slice(-5).reverse().map(function (a) { return '<div class="line"><span>' + esc(a.src) + '<small>' + new Date(a.ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</small></span><b>' + a.sc.toFixed(1) + '/' + a.max + '</b></div>'; }).join('') +
+    '<div class="mu" style="margin-top:6px">Total practice time: ' + Math.round(t / 60) + ' min</div>';
+}
+function tTopics() {
+  if (!ATT.length) return empty('📚', 'No topic data', 'Take a test and all 18 topics will be ranked here, weakest first.');
+  var g = agg(), done = weakFirst(g), un = TOPICS.filter(function (k) { return !g[k]; });
+  return '<p class="mu" style="margin-bottom:10px">Weakest topics first — tap Practise to drill one.</p>' + done.map(function (k) { return trow(k, g[k], true); }).join('') +
+    (un.length ? '<div class="sec">Not attempted yet (' + un.length + ')</div><div class="tgrid">' + un.map(function (k) { return '<button class="chip" data-act="ptopic" data-v="' + esc(k) + '">' + ICON[k] + ' ' + esc(k) + '</button>'; }).join('') + '</div>' : '');
+}
+function savedList() { return Object.keys(SAV).map(function (k) { return SAV[k]; }).filter(function (e) { return S.sf === 'all' || (S.sf === 'b' && e.b) || (S.sf === 'w' && e.w); }); }
+function tSav() {
+  var all = Object.keys(SAV).length, l = savedList();
+  var h = '<div class="chips sm">' + [['all', 'All (' + all + ')'], ['b', '🔖 Bookmarked'], ['w', '❌ Wrong notebook']].map(function (x) { return '<button class="chip ' + (S.sf === x[0] ? 'on' : '') + '" data-act="sfil" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
+  if (!l.length) return h + empty('🔖', 'Nothing saved here', 'Tap 🔖 Save during a test. Wrong answers are saved automatically.');
+  return h + '<button class="btn" data-act="practice" style="width:100%;margin-bottom:12px">▶ Practise these (' + l.length + ')</button>' + l.map(function (e) {
+    return '<div class="card"><div class="line" style="padding:0 0 6px"><span><span class="tag">' + esc(e.s) + (e.c ? ' · ' + esc(e.c) : '') + '</span> ' + (e.w ? '<span class="tag" style="color:#ef4444">wrong</span>' : '') + '</span><button class="btn g s" data-act="delsav" data-v="' + esc(e.k) + '">🗑</button></div><b class="qt">' + e.q + '</b><div class="opt ok" style="margin-top:10px">✅ ' + 'ABCD'.charAt(e.a) + '. ' + e.o[e.a] + '</div>' + (e.e ? '<div class="expl">💡 ' + e.e + '</div>' : '') + '<span class="mu">' + esc(e.src) + '</span></div>';
+  }).join('');
+}
+function setRow(l, d, c) { return '<div class="line"><span>' + l + (d ? '<small>' + d + '</small>' : '') + '</span>' + c + '</div>'; }
+function tSet() {
+  var kb = Math.round((JSON.stringify(ATT).length + JSON.stringify(SAV).length) / 1024 * 10) / 10;
+  var cols = { violet: '#8b5cf6', ocean: '#06b6d4', sunset: '#f97316', forest: '#10b981', rose: '#f43f5e' };
+  return '<div class="sec">Appearance</div><div class="card">' +
+    setRow('Dark mode', '', sw(root.dataset.theme === 'dark', 'theme')) +
+    '<div class="line"><span>Colour palette</span><span class="row">' + Object.keys(cols).map(function (k) { return '<button class="dot ' + (root.dataset.pal === k ? 'on' : '') + '" data-act="pick" data-v="' + k + '" style="background:' + cols[k] + '" aria-label="' + k + '"></button>'; }).join('') + '</span></div>' +
+    '<div class="line"><span>Text size</span><span class="row">' + ['A−', 'A', 'A+'].map(function (l, i) { return '<button class="chip ' + (SET.font === i ? 'on' : '') + '" style="padding:6px 14px" data-act="font" data-v="' + i + '">' + l + '</button>'; }).join('') + '</span></div>' +
+    setRow('Motion graphics', 'Turn off to save battery', sw(SET.motion, 'tg', 'motion')) + '</div>' +
+    '<div class="sec">Test experience</div><div class="card">' +
+    setRow('Show timer', 'Hide it to reduce pressure', sw(SET.showTimer, 'tg', 'showTimer')) +
+    setRow('Auto-next on answer', 'Jump ahead after choosing', sw(SET.autoNext, 'tg', 'autoNext')) +
+    setRow('Shuffle questions', 'Within each topic', sw(SET.shuffleQ, 'tg', 'shuffleQ')) +
+    setRow('Shuffle options', 'Stops memorising positions', sw(SET.shuffleO, 'tg', 'shuffleO')) +
+    setRow('Confirm before submit', '', sw(SET.confirmSubmit, 'tg', 'confirmSubmit')) +
+    setRow('Auto-save wrong answers', 'Builds your revision notebook', sw(SET.autoWrong, 'tg', 'autoWrong')) +
+    setRow('Haptic feedback', 'Light vibration on taps', sw(SET.haptic, 'tg', 'haptic')) +
+    setRow('Keep screen awake', 'During tests', sw(SET.wake, 'tg', 'wake')) +
+    setRow('Default topic-test time', 'Minutes', '<input type="number" id="dm" min="1" max="180" value="' + SET.defMins + '">') +
+    setRow('Negative marking by default', 'For topic-wise tests', sw(SET.defNeg, 'tg', 'defNeg')) + '</div>' +
+    '<div class="sec">Data</div><div class="card"><p class="mu" style="margin-bottom:10px">Stored on this device: ' + ATT.length + ' tests · ' + Object.keys(SAV).length + ' saved questions · ' + kb + ' KB</p>' +
+    '<div class="row"><button class="btn g s" data-act="export">⬇ Backup</button><button class="btn g s" data-act="import">⬆ Restore</button><button class="btn g s" data-act="wipe" style="color:#ef4444">🗑 Clear data</button></div></div>' +
+    '<p class="mu" style="text-align:center;margin-top:14px">WBCS Prelims Mock Test Series</p>';
+}
+function sheet() {
+  var tabs = [['last', '📊 Last test'], ['all', '📈 Overall'], ['chap', '📚 Topics'], ['sav', '🔖 Saved'], ['set', '⚙️ Settings']];
+  $('#stabs').innerHTML = tabs.map(function (t) { return '<button class="chip ' + (S.tab === t[0] ? 'on' : '') + '" data-act="tab" data-v="' + t[0] + '">' + t[1] + '</button>'; }).join('');
+  var b = $('#sbody'), y = b.scrollTop; b.innerHTML = ({ last: tLast, all: tAll, chap: tTopics, sav: tSav, set: tSet })[S.tab](); b.scrollTop = y;
+}
+function openSheet(tab) { if (tab) S.tab = tab; sheet(); $('#sheet').classList.add('show'); $('#shade2').classList.add('show'); }
+function closeSheet() { $('#sheet').classList.remove('show'); $('#shade2').classList.remove('show'); }
+var sheetOpen = function () { return $('#sheet').classList.contains('show'); };
 
-/* ---------- 5. VIEWS + HASH ROUTING ---------- */
-let activeQuiz = null, pendingTest = null, currentRecord = null, timerId = null, reviewF = "all";
-const VIEW_ROUTE = { testconfig: "config" }, ROUTE_VIEW = { config: "testconfig" };
-let routing = false;   // true while the router itself is changing the view (so no new history entry is pushed)
-
-function pushRoute(view) {
-  if (routing || view === "loading") return;
-  const h = "#/" + (VIEW_ROUTE[view] || view);
-  if (location.hash !== h) history.pushState(null, "", h);
-}
-function showView(name) {
-  const apply = () => {
-    document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
-    const v = $("view-" + name); v.classList.remove("hidden", "fade"); void v.offsetWidth; v.classList.add("fade");
-    document.body.dataset.view = name; if (name !== "quiz") document.body.classList.remove("focus");
-    window.scrollTo(0, 0);
+/* ---------- actions ---------- */
+function download(name, txt) { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+$('#imp').addEventListener('change', function (e) {
+  var f = e.target.files[0]; if (!f) return; var r = new FileReader();
+  r.onload = function () {
+    try { var d = JSON.parse(r.result); if (d.att) ATT = d.att; if (d.sav) SAV = d.sav; if (d.set) Object.assign(SET, d.set); put('wb_att', ATT); put('wb_sav', SAV); saveSet(); sheet(); alert('Backup restored.'); }
+    catch (x) { alert('That file is not a valid backup.'); }
   };
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (document.startViewTransition && !reduce && document.body.dataset.view !== name && name !== "loading") document.startViewTransition(apply); else apply();
-  pushRoute(name);
-}
-const RENDER = { dashboard: () => renderDashboard(), custom: () => renderCustomBuilder(), stats: () => renderStats(), saved: () => renderSaved(),
-  history: () => renderHistory(), datacheck: () => renderDataCheck(), search: () => renderSearch() };
-function goView(name) { RENDER[name](); showView(name); }
-function leaveQuiz(then) {
-  if (!activeQuiz) return then();
-  confirmModal("Leave this test?", "<p>Your progress is saved. You can resume from the dashboard.</p>", "Leave").then(ok => {
-    if (!ok) return; saveProgress(); clearInterval(timerId); activeQuiz = null; then();
-  });
-}
-function applyRoute(name) {
-  if (RENDER[name]) { RENDER[name](); showView(name); }
-  else if (name === "results" && currentRecord) { renderResults(currentRecord); showView("results"); }
-  else if (name === "review" && currentRecord) openReview(currentRecord);
-  else if (name === "config" && pendingTest) showView("testconfig");
-  else if (name === "quiz" && activeQuiz) { renderQuiz(); showView("quiz"); }
-  else { RENDER.dashboard(); showView("dashboard"); history.replaceState(null, "", "#/dashboard"); }
-}
-window.addEventListener("popstate", () => {
-  const name = location.hash.replace(/^#\/?/, "") || "dashboard", cur = document.body.dataset.view;
-  if (cur === "loading" || (ROUTE_VIEW[name] || name) === cur) return;
-  const proceed = () => { routing = true; try { applyRoute(name); } finally { routing = false; } };
-  if (activeQuiz && cur === "quiz" && name !== "quiz") {
-    confirmModal("Leave this test?", "<p>Your progress is saved. You can resume from the dashboard.</p>", "Leave").then(ok => {
-      if (!ok) { history.pushState(null, "", "#/quiz"); return; }
-      saveProgress(); clearInterval(timerId); activeQuiz = null; proceed();
-    });
-  } else proceed();
+  r.readAsText(f); e.target.value = '';
 });
-
-/* ---------- 6. DASHBOARD ---------- */
-function countdownHtml() {
-  const date = prefs.examDate; let msg = "Set your exam date", sub = "See a countdown and a daily question target.";
-  if (date) {
-    const days = Math.round((new Date(date + "T00:00:00") - new Date().setHours(0, 0, 0, 0)) / 864e5);
-    const unseen = Math.max(0, ALL_QUESTIONS.length - latestStatuses().size);
-    if (days > 1) msg = `${days} days to go`; else if (days === 1) msg = "Exam is tomorrow"; else if (days === 0) msg = "Exam day. Good luck!"; else msg = "Your exam date has passed";
-    sub = days > 0 && unseen ? `${Math.ceil(unseen / days)} new questions a day covers the ${unseen} you haven't tried yet.` : "Pick a new date any time.";
-  }
-  return `<div class="countdown"><div><b>${msg}</b><small>${sub}</small></div>
-    <div class="cd-set"><input type="date" id="exam-date" aria-label="Exam date" value="${esc(date || "")}">${date ? '<button class="link" data-act="clearExam">Remove</button>' : ""}</div></div>`;
-}
-function renderDashboard() {
-  const hist = getHistory(), sections = getSections(), days = load(K.days, {}), st = streaks(days);
-  const todayN = days[today()] || 0, goal = CONFIG.dailyGoal, prog = load(K.prog, null), ss = sectionStats();
-  const counts = { due: dueQuestions().length, mis: mistakeQuestions().length, sav: savedQuestions().length, rep: repeatedPool().length };
-  const quick = (act, attrs, icon, label, sub, off) => `<button class="quick" data-act="${act}" ${attrs} ${off ? "disabled" : ""}><span class="q-ico">${icon}</span><span><b>${label}</b><small>${sub}</small></span></button>`;
-  const byYear = {}; PAPERS.forEach(p => (byYear[p.year] = byYear[p.year] || []).push(p));
-  const years = Object.keys(byYear).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-
-  const paperCards = years.map(y => `
-    <div class="year-head"><h3>${esc(y)}</h3><span class="meta">${byYear[y].length} paper${byYear[y].length > 1 ? "s" : ""}</span></div>
-    <div class="card-grid">${byYear[y].map(p => {
-      const at = hist.filter(h => pid(h) === p.id && ["paper", "pyq"].includes(h.type)), best = at.length ? Math.max(...at.map(a => a.scorePercent)) : null;
-      return `<div class="card"><div class="card-row"><div class="ring" style="--p:${best || 0}"><span>${best === null ? "–" : best + "%"}</span></div>
-        <div><h3>${esc(p.name)}</h3><p class="meta">${p.count} questions, ${p.durationMin} min</p><p class="meta">+${p.marks.correct} / −${p.marks.wrong} · ${at.length ? at.length + " attempt(s)" : "Not attempted"}</p></div></div>
-        <div class="card-actions"><button class="btn primary" data-act="startPaper" data-id="${esc(p.id)}" data-mode="exam">Exam mode</button>
-        <button class="btn" data-act="startPaper" data-id="${esc(p.id)}" data-mode="practice">Practice</button></div></div>`;
-    }).join("")}</div>`).join("");
-
-  const repCard = counts.rep ? `<div class="card"><h3>Repeated Questions</h3><p class="meta">${counts.rep} question${counts.rep === 1 ? "" : "s"} that appeared in more than one paper</p>
-      <div class="bar"><i style="width:100%"></i></div><div class="card-actions"><button class="btn" data-act="startSpecial" data-kind="repeated">Practice</button></div></div>` : "";
-  const sectionCards = sections.map((s, i) => {
-    const total = ALL_QUESTIONS.filter(q => q.section === s).length, b = ss[s], acc = b ? pct(b.correct, b.attempted) : null;
-    return `<div class="card"><h3>${esc(s)}</h3><p class="meta">${total} question${total === 1 ? "" : "s"} across all papers</p>
-      <div class="bar"><i style="width:${acc || 0}%"></i></div><p class="meta">${acc !== null ? `Accuracy ${acc}%` : "No attempts yet"}</p>
-      <div class="card-actions"><button class="btn" data-act="startSection" data-i="${i}" data-mode="practice">Practice</button><button class="btn" data-act="startSection" data-i="${i}" data-mode="exam">Timed test</button></div></div>`;
-  }).join("");
-
-  $("dashboard-body").innerHTML = `
-    <div class="hero"><div><h1>WBCS (Prelims) Previous Year Question Papers</h1><p>Sit a full paper under exam conditions, drill one section, or work through the questions you keep missing.</p>
-      <div class="badges">${badgeDefs().map(b => `<span class="badge ${b.ok ? "on" : ""}" title="${esc(b.desc)}">${esc(b.name)}</span>`).join("")}</div></div>
-      <div class="goal"><p>Today's goal</p><b>${todayN} / ${goal}</b> <span>questions</span><div class="bar"><i style="width:${Math.min(100, pct(todayN, goal))}%"></i></div>
-      <p>${st.current ? `${st.current}-day streak` : "Answer a question to start a streak"}</p></div></div>
-    ${countdownHtml()}
-    <div class="quick-row">
-      ${prog ? quick("resume", "", "▶", "Resume test", esc(prog.meta?.name || "In progress"), false).replace('class="quick"', 'class="quick resume"') : ""}
-      ${quick("startSpecial", 'data-kind="due"', "🔁", "Review due", `${counts.due} question(s)`, !counts.due)}
-      ${quick("startSpecial", 'data-kind="mistakes"', "🎯", "My mistakes", `${counts.mis} question(s)`, !counts.mis)}
-      ${quick("startSpecial", 'data-kind="saved"', "★", "Saved", `${counts.sav} question(s)`, !counts.sav)}
-      ${quick("startSpecial", 'data-kind="repeated"', "📌", "Repeated", `${counts.rep} question(s)`, !counts.rep)}
-    </div>
-    <h2>Full papers</h2><p class="meta">Each paper keeps its own year, shift, timing and marking scheme.</p>
-    ${paperCards || `<div class="card"><h3>No papers yet</h3><p class="meta">Add a data file such as data/2019.js, then list "2019" in data/manifest.js.</p></div>`}
-    <h2>Section-wise practice</h2><p class="meta">Questions on one subject, pooled from every paper.</p>
-    <div class="card-grid">${repCard}${sectionCards || "<p class='meta'>Sections appear once papers are loaded.</p>"}</div>`;
-  const w = $("data-warning");
-  if (VALIDATION.errors.length) { w.textContent = `${VALIDATION.errors.length} data problem(s) found. Open "Check question data" at the bottom of the page.`; w.classList.remove("hidden"); } else w.classList.add("hidden");
-}
-
-/* ---------- 7. STARTING TESTS ---------- */
-function startPaper(id, mode) {
-  const p = paperById(id), pool = sortPool(ALL_QUESTIONS.filter(q => q.paperId === id));
-  openConfig({ kind: "paper", name: p.name, paperId: id, year: p.year, paper: p, pool, mode, order: "original", shuffle: false, marks: p.marks, sections: [...new Set(pool.map(q => q.section))] });
-}
-function startSection(i, mode) {
-  const s = getSections()[i], pool = ALL_QUESTIONS.filter(q => q.section === s);
-  openConfig({ kind: "section", name: `Topic: ${s}`, pool: sortPool(pool), mode, order: "random", shuffle: false, marks: CONFIG.defaultMarks, sections: [s] });
-}
-function startSpecial(kind, recordPool) {
-  const map = { due: ["Spaced review", dueQuestions], mistakes: ["My mistakes", mistakeQuestions], saved: ["Saved questions", savedQuestions], repeated: ["Repeated questions", repeatedPool] };
-  const pool = recordPool || map[kind][1]();
-  if (!pool.length) return toast("Nothing here yet.");
-  openConfig({ kind: "special", name: recordPool ? "Retry: my mistakes" : map[kind][0], pool, mode: "practice", order: "random", shuffle: false, marks: CONFIG.defaultMarks, sections: [...new Set(pool.map(q => q.section))] });
-}
-function startCustom() {
-  const ps = [...document.querySelectorAll(".c-paper:checked")].map(e => e.value), ss = [...document.querySelectorAll(".c-section:checked")].map(e => e.value), ds = [...document.querySelectorAll(".c-diff:checked")].map(e => e.value);
-  if (!ps.length || !ss.length || !ds.length) return toast("Pick at least one paper, section and difficulty.");
-  const pool = sortPool(ALL_QUESTIONS.filter(q => ps.includes(q.paperId) && ss.includes(q.section) && ds.includes(q.difficulty)));
-  if (!pool.length) return toast("No questions match that combination.");
-  const c = $("custom-count").value;
-  openConfig({ kind: "custom", name: "Custom test", pool, mode: "exam", order: "random", shuffle: true, marks: CONFIG.defaultMarks, sections: ss, count: c === "all" ? pool.length : Math.min(+c, pool.length) });
-}
-function renderCustomBuilder() {
-  const chip = (cls, v, label) => `<label class="chip"><input type="checkbox" class="${cls}" value="${esc(v)}" checked> ${esc(label)}</label>`;
-  $("custom-papers").innerHTML = PAPERS.map(p => chip("c-paper", p.id, p.name)).join("") || "<span class='meta'>No papers loaded</span>";
-  $("custom-sections").innerHTML = getSections().map(s => chip("c-section", s, s)).join("");
-  $("custom-difficulty").innerHTML = [...new Set(ALL_QUESTIONS.map(q => q.difficulty))].map(d => chip("c-diff", d, d)).join("");
-}
-
-/* ---------- 8. TEST CONFIG ---------- */
-function openConfig(t) {
-  pendingTest = t; const n = t.count || t.pool.length;
-  $("config-title").textContent = t.name; $("config-meta").textContent = `${t.pool.length} question(s) available`;
-  $("config-mode").value = t.mode; $("config-order").value = t.order; $("config-shuffle").checked = t.shuffle;
-  $("config-count").value = n; $("config-count").max = t.pool.length;
-  $("mark-correct").value = t.marks.correct; $("mark-wrong").value = t.marks.wrong;
-  $("timer-mode").value = t.mode === "exam" ? "perTest" : "none"; syncTimer(true); showView("testconfig");
-}
-function syncTimer(reset) {
-  const t = pendingTest, tm = $("timer-mode").value;
-  $("timer-row").classList.toggle("hidden", tm === "none");
-  $("timer-label").textContent = tm === "perQuestion" ? "Seconds per question" : "Total minutes";
-  if (reset) {
-    const c = Math.min(Math.max(1, num($("config-count").value, t.pool.length)), t.pool.length);
-    $("timer-value").value = tm === "perQuestion" ? 30 : (t.kind === "paper" ? Math.max(1, Math.round(t.paper.durationMin * c / t.pool.length)) : Math.max(1, Math.ceil(c * 0.75)));
-  }
-}
-function launchTest() {
-  const t = pendingTest, mode = $("config-mode").value, order = $("config-order").value, shuf = $("config-shuffle").checked;
-  const count = Math.min(Math.max(1, Math.floor(num($("config-count").value, t.pool.length))), t.pool.length);
-  const tm = $("timer-mode").value, tv = Math.max(1, num($("timer-value").value, 30));
-  const marks = { correct: Math.max(0, num($("mark-correct").value, 1)), wrong: Math.max(0, num($("mark-wrong").value, 0)) };
-  const pool = (order === "random" ? shuffle(t.pool) : [...t.pool]).slice(0, count);
-  const questions = pool.map(q => {
-    const c = { ...q };
-    if (shuf) { const idx = shuffle(q.options.map((_, i) => i)); c.options = idx.map(i => q.options[i]); c.correctAnswer = idx.indexOf(q.correctAnswer); } else c.options = [...q.options];
-    return c;
-  });
-  const perTest = tm === "perTest" ? Math.round(tv * 60) : null, perQ = tm === "perQuestion" ? Math.round(tv) : null;
-  activeQuiz = { meta: { kind: t.kind, name: t.name, paperId: t.paperId || null, year: t.year ?? null, sections: t.sections }, mode, questions, index: 0,
-    answers: {}, marked: {}, visited: {}, times: {}, timerMode: tm, perQ, timeStart: perTest ?? perQ ?? 0, timeLeft: perTest ?? perQ ?? 0, elapsed: 0, marks, startedAt: Date.now() };
-  startTimerLoop(); renderQuiz(); showView("quiz"); saveProgress();
-}
-
-/* ---------- 9. QUIZ ENGINE ---------- */
-const saveProgress = () => { if (activeQuiz) save(K.prog, activeQuiz); };
-function startTimerLoop() { clearInterval(timerId); timerId = setInterval(tick, 1000); updateTimerDisplay(); }
-function tick() {
-  const a = activeQuiz; if (!a || document.body.dataset.view !== "quiz") return;
-  const q = a.questions[a.index]; a.times[q.id] = (a.times[q.id] || 0) + 1; a.elapsed++;
-  if (a.timerMode !== "none") {
-    a.timeLeft--;
-    if (a.timeLeft <= 0) {
-      if (a.timerMode === "perQuestion" && a.index < a.questions.length - 1) { toast("Time's up for this question."); goToQuestion(a.index + 1); }
-      else { toast("Time's up. Submitting your test."); finishTest(); return; }
-    }
-  }
-  updateTimerDisplay(); if (a.elapsed % 5 === 0) saveProgress();
-}
-function updateTimerDisplay() {
-  const a = activeQuiz, el = $("quiz-timer"); if (!a) return;
-  el.textContent = `⏱ ${clock(a.timerMode === "none" ? a.elapsed : Math.max(0, a.timeLeft))}`;
-  el.classList.toggle("timer-low", a.timerMode !== "none" && a.timeLeft <= 10);
-}
-function renderQuiz() {
-  const a = activeQuiz, q = a.questions[a.index], n = a.questions.length; a.visited[q.id] = true;
-  $("quiz-progress-label").textContent = `Question ${a.index + 1} of ${n}`;
-  $("quiz-progress-fill").style.width = `${(a.index + 1) / n * 100}%`;
-  $("quiz-meta").innerHTML = `<span>${esc(q.section)}</span><span>${esc(q.paperName)} Q${q.originalNumber}</span><span>${esc(q.difficulty)}</span>${q.verified ? "" : '<span class="chip bad">Answer key unverified</span>'}`;
-  $("quiz-question").innerHTML = rich(q.question);
-  const chosen = a.answers[q.id], locked = a.mode === "practice" && chosen !== undefined;
-  $("quiz-options").innerHTML = q.options.map((o, i) => {
-    let cls = "option"; if (locked) { cls += " locked"; if (i === q.correctAnswer) cls += " right"; else if (i === chosen) cls += " wrong"; } else if (chosen === i) cls += " selected";
-    return `<button class="${cls}" data-act="pick" data-i="${i}"><span class="opt-key">${KEYL[i]}</span><span>${rich(o)}</span></button>`;
-  }).join("");
-  $("quiz-feedback").innerHTML = locked ? `<div class="feedback ${chosen === q.correctAnswer ? "" : "bad"}"><strong>${chosen === q.correctAnswer ? "Correct" : `Incorrect. The answer is ${KEYL[q.correctAnswer]}.`}</strong>${q.explanation ? `<p>${rich(q.explanation)}</p>` : ""}</div>` : "";
-  const note = load(K.notes, {})[q.id] || ""; $("note-box").value = note; $("note-wrap").open = !!note;
-  $("mark-btn").textContent = a.marked[q.id] ? "Unmark" : "Mark";
-  $("bm-btn").textContent = load(K.bm, {})[q.id] ? "★ Saved" : "☆ Save";
-  $("clear-btn").classList.toggle("hidden", a.mode === "practice");
-  $("prev-btn").disabled = a.index === 0;
-  $("next-btn").textContent = a.index === n - 1 ? "Finish" : "Next";
-  $("quiz-nav").innerHTML = a.questions.map((x, i) => {
-    const ans = a.answers[x.id] !== undefined, mk = a.marked[x.id];
-    let c = ans && mk ? "both" : mk ? "marked" : ans ? "answered" : a.visited[x.id] ? "notans" : "unvisited";
-    if (i === a.index) c += " current"; return `<button class="nav-cell ${c}" data-act="goto" data-i="${i}">${i + 1}</button>`;
-  }).join("");
-  updateTimerDisplay();
-}
-function pick(i) {
-  const a = activeQuiz, q = a.questions[a.index]; if (a.mode === "practice" && a.answers[q.id] !== undefined) return;
-  a.answers[q.id] = i; renderQuiz(); saveProgress();
-}
-function goToQuestion(i) {
-  const a = activeQuiz; if (i < 0) return; if (i >= a.questions.length) return requestSubmit();
-  a.index = i; if (a.timerMode === "perQuestion") a.timeLeft = a.perQ; renderQuiz(); saveProgress(); window.scrollTo(0, 0);
-}
-function requestSubmit() {
-  const a = activeQuiz, n = a.questions.length, ans = Object.keys(a.answers).length, mk = Object.values(a.marked).filter(Boolean).length;
-  confirmModal("Submit this test?", `<p>Answered: <b>${ans}</b> of ${n}<br>Not answered: <b>${n - ans}</b><br>Marked for review: <b>${mk}</b></p>`, "Submit").then(ok => { if (ok) finishTest(); });
-}
-async function resetQuiz() {
-  const a = activeQuiz; if (!a) return;
-  if (!(await confirmModal("Reset this test?", "<p>All answers, marks and timers for this attempt are cleared and the test restarts from Question 1.</p>", "Reset"))) return;
-  const timeLeft = a.timeStart ?? (a.timerMode === "perTest" ? a.timeLeft + a.elapsed : a.timerMode === "perQuestion" ? a.perQ : 0);
-  Object.assign(a, { answers: {}, marked: {}, visited: {}, times: {}, elapsed: 0, index: 0, timeLeft });
-  renderQuiz(); saveProgress(); toast("Test reset.");
-}
-
-/* ---------- 10. RESULTS ---------- */
-function finishTest() {
-  const a = activeQuiz; if (!a) return; clearInterval(timerId);
-  const before = new Set(badgeDefs().filter(b => b.ok).map(b => b.id));
-  const qs = a.questions, m = a.marks; let correct = 0, attempted = 0; const sectionBreakdown = {}, paperBreakdown = {};
-  qs.forEach(q => {
-    const ans = a.answers[q.id], isA = ans !== undefined, isC = isA && ans === q.correctAnswer, t = a.times[q.id] || 0;
-    if (isA) attempted++; if (isC) correct++;
-    [[sectionBreakdown, q.section], [paperBreakdown, q.paperName]].forEach(([o, k]) => {
-      o[k] = o[k] || { total: 0, attempted: 0, correct: 0, timeSec: 0 }; o[k].total++; o[k].timeSec += t; if (isA) o[k].attempted++; if (isC) o[k].correct++;
-    });
-  });
-  const incorrect = attempted - correct, score = +(correct * m.correct - incorrect * m.wrong).toFixed(2), maxScore = +(qs.length * m.correct).toFixed(2);
-  const rec = { id: Date.now(), date: new Date().toISOString(), testName: a.meta.name, type: a.meta.kind, mode: a.mode, paperId: a.meta.paperId, year: a.meta.year, sections: a.meta.sections,
-    questionIds: qs.map(q => q.id), answers: a.answers, marked: a.marked, times: a.times, optionOrder: qs.map(q => ({ id: q.id, options: q.options, correctAnswer: q.correctAnswer })),
-    totalQuestions: qs.length, attempted, correct, incorrect, unanswered: qs.length - attempted, marks: m, score, maxScore,
-    scorePercent: maxScore ? Math.max(0, Math.round(score / maxScore * 100)) : 0, timeTakenSec: a.elapsed, avgTimeSec: Math.round(a.elapsed / qs.length), sectionBreakdown, paperBreakdown };
-  const h = getHistory(); h.unshift(rec); save(K.hist, h);
-  addDay(attempted); updateSRS(qs, a.answers); localStorage.removeItem(K.prog); activeQuiz = null;
-  currentRecord = rec; renderResults(rec); showView("results");
-  badgeDefs().filter(b => b.ok && !before.has(b.id)).forEach(b => toast(`New badge: ${b.name}`));
-}
-const rowLabel = (acc, att) => att < CONFIG.minAttemptsForLabel ? '<span class="tag">Need more data</span>' : acc >= CONFIG.strongFrom ? '<span class="tag good">Strong</span>' : acc < CONFIG.weakBelow ? '<span class="tag bad">Weak</span>' : '<span class="tag">Average</span>';
-function breakdownTable(obj, first) {
-  return `<tr><th>${first}</th><th>Total</th><th>Attempted</th><th>Correct</th><th>Accuracy</th><th>Avg time</th></tr>` + Object.entries(obj).map(([k, b]) =>
-    `<tr><td>${esc(k)}</td><td>${b.total}</td><td>${b.attempted}</td><td>${b.correct}</td><td>${pct(b.correct, b.attempted)}%</td><td>${b.timeSec !== undefined ? Math.round(b.timeSec / b.total) + "s" : "–"}</td></tr>`).join("");
-}
-function statusOf(r, id) { const o = r.optionOrder.find(x => x.id === id), a = r.answers[id]; return a === undefined ? "unanswered" : a === o.correctAnswer ? "correct" : "incorrect"; }
-function renderResults(r) {
-  currentRecord = r;
-  $("results-title").textContent = r.testName;
-  $("results-sub").textContent = `${new Date(r.date).toLocaleString()} · ${(r.mode || "exam") === "exam" ? "Exam mode" : "Practice mode"}`;
-  const mk = r.marks || CONFIG.defaultMarks, sc = r.score ?? r.correct, mx = r.maxScore ?? r.totalQuestions;
-  const st = (n, l) => `<div class="stat"><span class="stat-num">${n}</span><span class="stat-label">${l}</span></div>`;
-  $("results-overall").innerHTML = st(`${sc} / ${mx}`, `Marks (+${mk.correct} / −${mk.wrong})`) + st(r.scorePercent + "%", "Score") + st(`${r.correct}/${r.totalQuestions}`, "Correct") + st(r.incorrect, "Incorrect") + st(r.unanswered, "Unanswered") + st(fmt(r.timeTakenSec), "Time taken") + st(r.avgTimeSec + "s", "Avg per question");
-  const secs = Object.entries(r.sectionBreakdown || {}).filter(([, b]) => b.attempted > 0);
-  const slow = Object.entries(r.sectionBreakdown || {}).filter(([, b]) => b.timeSec).sort((x, y) => y[1].timeSec / y[1].total - x[1].timeSec / x[1].total)[0];
-  const weak = secs.filter(([, b]) => b.attempted >= 3).sort((x, y) => x[1].correct / x[1].attempted - y[1].correct / y[1].attempted)[0];
-  $("results-insight").textContent = [weak ? `Weakest section: ${weak[0]} (${pct(weak[1].correct, weak[1].attempted)}% accuracy).` : "", slow ? `Slowest section: ${slow[0]} (${Math.round(slow[1].timeSec / slow[1].total)}s per question).` : ""].filter(Boolean).join(" ");
-  const sk = Object.keys(r.sectionBreakdown || {}); $("results-section-wrap").classList.toggle("hidden", sk.length <= 1);
-  if (sk.length > 1) $("results-section-table").innerHTML = breakdownTable(r.sectionBreakdown, "Section");
-  const pb = r.paperBreakdown || r.yearBreakdown || {}; $("results-paper-wrap").classList.toggle("hidden", Object.keys(pb).length <= 1);
-  if (Object.keys(pb).length > 1) $("results-paper-table").innerHTML = breakdownTable(pb, "Paper");
-  const ts = r.questionIds.map(id => r.times?.[id] || 0), mxT = Math.max(1, ...ts);
-  $("results-heat").innerHTML = r.questionIds.map((id, i) => `<div class="heat s-${statusOf(r, id)}" style="--t:${(ts[i] / mxT).toFixed(2)}" title="Q${i + 1}: ${ts[i]}s, ${statusOf(r, id)}">${i + 1}</div>`).join("");
-}
-
-/* ---------- 11. REVIEW + SAVED ---------- */
-function reviewItem(q, opts, correct, userAns, status) {
-  const note = load(K.notes, {})[q.id], bm = !!load(K.bm, {})[q.id];
-  return `<article class="review-item ${status}"><div class="chips-meta"><span>${esc(q.section)}</span><span>${esc(q.paperName)} Q${q.originalNumber}</span>${q.verified ? "" : '<span class="chip bad">Answer key unverified</span>'}</div>
-    <p class="review-q">${rich(q.question)}</p>
-    ${opts.map((o, i) => `<div class="review-opt ${i === correct ? "correct" : i === userAns ? "incorrect" : ""}"><b>${KEYL[i]}</b> ${rich(o)}${i === userAns ? " <em>(your answer)</em>" : ""}</div>`).join("")}
-    ${status === "neutral" ? "" : `<p class="review-status">${status === "unanswered" ? "Not answered" : status === "correct" ? "Correct" : "Incorrect"}</p>`}
-    ${q.explanation ? `<p class="review-explain"><strong>Explanation:</strong> ${rich(q.explanation)}</p>` : ""}
-    ${note ? `<p class="review-note">Note: ${rich(note)}</p>` : ""}
-    <button class="btn small no-print" data-act="bmToggle" data-id="${esc(q.id)}">${bm ? "★ Saved" : "☆ Save"}</button></article>`;
-}
-function openReview(r) {
-  r = r || currentRecord; currentRecord = r;
-  const items = r.questionIds.map(id => ({ id, q: QMAP.get(id), o: r.optionOrder.find(x => x.id === id) })).filter(x => x.q && x.o).map(x => ({ ...x, st: statusOf(r, x.id), mk: !!r.marked?.[x.id] }));
-  const F = { all: ["All", () => true], incorrect: ["Wrong", x => x.st === "incorrect"], unanswered: ["Unanswered", x => x.st === "unanswered"], correct: ["Correct", x => x.st === "correct"], marked: ["Marked", x => x.mk] };
-  $("review-title").textContent = `Review: ${r.testName}`;
-  $("review-filters").innerHTML = Object.entries(F).map(([k, [l, f]]) => `<button class="chip ${reviewF === k ? "on" : ""}" data-act="reviewFilter" data-f="${k}">${l} (${items.filter(f).length})</button>`).join("");
-  $("review-list").innerHTML = items.filter(F[reviewF][1]).map(x => reviewItem(x.q, x.o.options, x.o.correctAnswer, r.answers[x.id], x.st)).join("") || "<p class='meta'>No questions in this filter.</p>";
-  showView("review");
-}
-function renderSaved() {
-  const qs = savedQuestions();
-  $("saved-body").innerHTML = `<h2>Saved questions</h2><p class="meta">Bookmarked questions with answers and your notes, ready for revision.</p>
-    ${qs.length ? `<div class="quiz-actions"><button class="btn primary" data-act="startSpecial" data-kind="saved">Practice saved questions</button></div>` : ""}
-    ${qs.map(q => reviewItem(q, q.options, q.correctAnswer, undefined, "neutral")).join("") || "<div class='card'><h3>Nothing saved yet</h3><p class='meta'>Tap Save on any question while practising or reviewing.</p></div>"}`;
-}
-
-/* ---------- 12. SEARCH, HISTORY, STATS, DATA CHECK ---------- */
-function runSearch() {
-  const input = $("search-input"); if (!input) return;
-  const terms = normalize(input.value).split(" ").filter(Boolean), topic = $("search-topic").value;
-  const out = $("search-results"), count = $("search-count");
-  if (!terms.length && !topic) { count.textContent = `Type to search ${ALL_QUESTIONS.length} questions.`; out.innerHTML = ""; return; }
-  const hits = sortPool(ALL_QUESTIONS.filter(q => {
-    if (topic && q.section !== topic) return false;
-    const text = normalize([q.question, ...q.options, q.explanation].join(" "));
-    return terms.every(w => text.includes(w));
-  }));
-  count.textContent = hits.length > 50 ? `${hits.length} matches. Showing the first 50.` : `${hits.length} match${hits.length === 1 ? "" : "es"}.`;
-  out.innerHTML = hits.slice(0, 50).map(q => reviewItem(q, q.options, q.correctAnswer, undefined, "neutral")).join("") || "<div class='card'><h3>No matches</h3><p class='meta'>Try fewer or different words.</p></div>";
-}
-function renderSearch() {
-  if (!$("search-input")) {
-    $("search-body").innerHTML = `<h2>Search questions</h2>
-      <div class="search-bar"><input id="search-input" type="search" placeholder="Search question, option or explanation" autocomplete="off">
-      <select id="search-topic" aria-label="Topic"><option value="">All topics</option>${getSections().map(s => `<option>${esc(s)}</option>`).join("")}</select></div>
-      <p id="search-count" class="meta"></p><div id="search-results"></div>`;
-  }
-  runSearch();
-  if (matchMedia("(hover: hover)").matches) setTimeout(() => $("search-input") && $("search-input").focus(), 350);
-}
-function renderHistory() {
-  const h = getHistory();
-  $("history-list").innerHTML = h.length ? h.map(r => `<div class="card"><h3>${esc(r.testName)}</h3><p class="meta">${new Date(r.date).toLocaleString()}</p>
-    <p class="meta">${r.scorePercent}% · ${r.correct}/${r.totalQuestions} correct · ${fmt(r.timeTakenSec)}</p>
-    <div class="card-actions"><button class="btn" data-act="openHistory" data-id="${r.id}">Details</button><button class="btn" data-act="reviewHistory" data-id="${r.id}">Review</button></div></div>`).join("") : "<div class='card'><h3>No attempts yet</h3><p class='meta'>Finish a test and it will appear here.</p></div>";
-}
-function trendSvg(v) {
-  if (v.length < 2) return "<p class='meta'>Finish at least two tests to see your trend.</p>";
-  const W = 600, H = 180, p = 28, pts = v.map((x, i) => [p + i * (W - 2 * p) / (v.length - 1), H - p - x / 100 * (H - 2 * p)]);
-  return `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="Score trend">${[0, 50, 100].map(g => { const y = H - p - g / 100 * (H - 2 * p); return `<line x1="${p}" x2="${W - p}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="2" y="${y + 4}" font-size="11" fill="var(--ink-soft)">${g}%</text>`; }).join("")}
-    <polyline fill="none" stroke="var(--brand)" stroke-width="2.5" points="${pts.map(q => q.join(",")).join(" ")}"/>${pts.map((q, i) => `<circle cx="${q[0]}" cy="${q[1]}" r="4" fill="var(--accent)"><title>${v[i]}%</title></circle>`).join("")}</svg>`;
-}
-function renderStats() {
-  const h = getHistory(), ss = sectionStats(), tot = Object.values(ss).reduce((s, b) => ({ a: s.a + b.attempted, c: s.c + b.correct, t: s.t + b.timeSec }), { a: 0, c: 0, t: 0 });
-  const trend = [...h].reverse().slice(-20).map(r => r.scorePercent), st = streaks(load(K.days, {}));
-  const freq = [...detectRepeatsMap().values()].filter(g => g.length > 1).sort((a, b) => b.length - a.length).slice(0, 8);
-  const k = (n, l) => `<div class="stat"><span class="stat-num">${n}</span><span class="stat-label">${l}</span></div>`;
-  const mastery = getSections().map((s, i) => {
-    const b = ss[s], acc = b && b.attempted ? pct(b.correct, b.attempted) : null;
-    return `<button class="heat-tile${acc === null ? " none" : ""}" style="--h:${acc === null ? 0 : Math.round(acc * 1.2)}" data-act="startSection" data-i="${i}" data-mode="practice" title="Practise ${esc(s)}"><b>${esc(s)}</b><span>${acc === null ? "Not tried" : acc + "%"}</span></button>`;
-  }).join("");
-  $("stats-body").innerHTML = `<h2>Your progress</h2>
-    <div class="stat-grid">${k(h.length, "Tests finished")}${k(tot.a, "Questions answered")}${k(pct(tot.c, tot.a) + "%", "Overall accuracy")}${k(tot.a && tot.t ? Math.round(tot.t / tot.a) + "s" : "–", "Avg time per answer")}${k(st.current, "Day streak")}${k(st.best, "Best streak")}</div>
-    <h3>Topic mastery</h3><p class="meta">Tap a topic to practise it. Red is weak, green is strong.</p><div class="mastery">${mastery}</div>
-    <h3>Score trend (last 20 tests)</h3>${trendSvg(trend)}
-    <h3>Section strengths</h3><div class="table-scroll"><table class="data-table"><tr><th>Section</th><th>Attempted</th><th>Accuracy</th><th>Avg time</th><th>Level</th></tr>
-    ${getSections().map(s => { const b = ss[s]; if (!b) return `<tr><td>${esc(s)}</td><td>0</td><td>–</td><td>–</td><td><span class="tag">Need more data</span></td></tr>`; const acc = pct(b.correct, b.attempted); return `<tr><td>${esc(s)}</td><td>${b.attempted}</td><td>${acc}%</td><td>${b.timeSec ? Math.round(b.timeSec / Math.max(1, b.attempted)) + "s" : "–"}</td><td>${rowLabel(acc, b.attempted)}</td></tr>`; }).join("")}</table></div>
-    <h3>Most repeated questions</h3>${freq.length ? freq.map(g => `<div class="freq"><b>${rich(g[0].question)}</b><br><span class="meta">Seen in ${g.length} papers: ${esc(g.map(q => q.paperName + " Q" + q.originalNumber).join(", "))}</span></div>`).join("") + `<div class="quiz-actions"><button class="btn" data-act="startSpecial" data-kind="repeated">Practice repeated questions</button></div>` : "<p class='meta'>No repeats found across the loaded papers yet.</p>"}`;
-}
-function renderDataCheck() {
-  const secs = getSections(), v = VALIDATION;
-  $("datacheck-body").innerHTML = `<h2>Question data check</h2>
-    <p class="meta">${ALL_QUESTIONS.length} questions in ${PAPERS.length} paper(s), ${secs.length} section(s).</p>
-    <div class="stat-grid"><div class="stat"><span class="stat-num">${v.errors.length}</span><span class="stat-label">Errors</span></div><div class="stat"><span class="stat-num">${v.warns.length}</span><span class="stat-label">Warnings</span></div></div>
-    ${v.errors.length ? `<h3>Errors</h3>${v.errors.map(e => `<p class="meta">• ${esc(e)}</p>`).join("")}` : "<p class='insight'>No errors found.</p>"}
-    ${v.warns.length ? `<h3>Warnings</h3>${v.warns.slice(0, 80).map(e => `<p class="meta">• ${esc(e)}</p>`).join("")}${v.warns.length > 80 ? `<p class="meta">…and ${v.warns.length - 80} more</p>` : ""}` : ""}
-    <h3>Questions per section and paper</h3><div class="table-scroll"><table class="data-table"><tr><th>Section</th>${PAPERS.map(p => `<th>${esc(p.name)}</th>`).join("")}<th>Total</th></tr>
-    ${secs.map(s => `<tr><td>${esc(s)}</td>${PAPERS.map(p => `<td>${ALL_QUESTIONS.filter(q => q.section === s && q.paperId === p.id).length}</td>`).join("")}<td>${ALL_QUESTIONS.filter(q => q.section === s).length}</td></tr>`).join("")}
-    <tr><th>Total</th>${PAPERS.map(p => `<th>${p.count}</th>`).join("")}<th>${ALL_QUESTIONS.length}</th></tr></table></div>`;
-}
-
-/* ---------- 13. BACKUP ---------- */
-function exportData() {
-  const data = {}; [K.hist, K.prefs, K.bm, K.notes, K.srs, K.days].forEach(k => data[k] = load(k, null));
-  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: "wbpsc-clerkship-pyq", version: 3, exportedAt: new Date().toISOString(), data }, null, 2)], { type: "application/json" }));
-  a.download = `clerkship-pyq-backup-${today()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-function importData(file) {
-  const rd = new FileReader();
-  rd.onload = async () => {
-    try {
-      const j = JSON.parse(rd.result); if (j.app !== "wbpsc-clerkship-pyq" || !j.data) throw new Error("bad");
-      if (!(await confirmModal("Replace your progress?", "<p>This replaces the history, notes, saved questions and settings on this device with the backup.</p>", "Import"))) return;
-      Object.entries(j.data).forEach(([k, v]) => { if (Object.values(K).includes(k) && v !== null) save(k, v); });
-      applyPrefs(); toast("Backup imported."); goView("history");
-    } catch (e) { toast("That file is not a valid backup."); }
-  };
-  rd.readAsText(file);
-}
-
-/* ---------- 14. EVENTS ---------- */
-function refreshCurrent() {
-  const v = document.body.dataset.view;
-  if (v === "review") openReview(currentRecord); else if (v === "saved") renderSaved(); else if (v === "search") runSearch(); else if (v === "quiz" && activeQuiz) renderQuiz();
-}
-const ACTIONS = {
-  home: () => leaveQuiz(() => goView("dashboard")),
-  nav: d => leaveQuiz(() => goView(d.view)),
-  theme: () => setPref("theme", document.body.classList.contains("dark") ? "light" : "dark"),
-  fontUp: () => setPref("font", Math.min(1.3, +(prefs.font + 0.1).toFixed(1))),
-  fontDown: () => setPref("font", Math.max(0.9, +(prefs.font - 0.1).toFixed(1))),
-  focus: () => document.body.classList.toggle("focus"),
-  startPaper: d => startPaper(d.id, d.mode),
-  startSection: d => startSection(+d.i, d.mode),
-  startSpecial: d => startSpecial(d.kind),
-  startCustom, launch: launchTest,
-  resetConfig: () => { if (pendingTest) { openConfig(pendingTest); toast("Settings reset to defaults."); } },
-  resetQuiz,
-  clearExam: () => { setPref("examDate", null); renderDashboard(); },
-  chipsAll: d => document.querySelectorAll(`#${d.target} input`).forEach(i => i.checked = d.v === "1"),
-  resume: () => { const p = load(K.prog, null); if (!p) return; activeQuiz = p; startTimerLoop(); renderQuiz(); showView("quiz"); },
-  pick: d => pick(+d.i), goto: d => goToQuestion(+d.i),
-  prev: () => goToQuestion(activeQuiz.index - 1), next: () => goToQuestion(activeQuiz.index + 1),
-  clear: () => { delete activeQuiz.answers[activeQuiz.questions[activeQuiz.index].id]; renderQuiz(); saveProgress(); },
-  mark: () => { const id = activeQuiz.questions[activeQuiz.index].id; activeQuiz.marked[id] = !activeQuiz.marked[id]; renderQuiz(); saveProgress(); },
-  bm: () => ACTIONS.bmToggle({ id: activeQuiz.questions[activeQuiz.index].id }),
-  bmToggle: d => { const b = load(K.bm, {}); if (b[d.id]) delete b[d.id]; else b[d.id] = true; save(K.bm, b); refreshCurrent(); },
-  submit: requestSubmit,
-  review: () => { reviewF = "all"; openReview(); },
-  reviewFilter: d => { reviewF = d.f; openReview(); },
-  retryWrong: () => { const r = currentRecord; const pool = r.questionIds.filter(id => statusOf(r, id) !== "correct").map(id => QMAP.get(id)).filter(Boolean); startSpecial("mistakes", pool); },
-  print: () => window.print(),
-  share: () => { const r = currentRecord, text = `${r.testName}: ${r.score ?? r.correct}/${r.maxScore ?? r.totalQuestions} (${r.scorePercent}%), ${r.correct} correct, ${r.incorrect} wrong, ${fmt(r.timeTakenSec)}. WBCS PYQs`;
-    if (navigator.share) navigator.share({ text }).catch(() => {}); else navigator.clipboard?.writeText(text).then(() => toast("Result copied to clipboard")); },
-  openHistory: d => { const r = getHistory().find(x => String(x.id) === d.id); if (r) { renderResults(r); showView("results"); } },
-  reviewHistory: d => { const r = getHistory().find(x => String(x.id) === d.id); if (r) { reviewF = "all"; openReview(r); } },
-  exportData, importData: () => $("import-file").click(),
-  clearHistory: async () => { if (await confirmModal("Clear all progress?", "<p>This deletes attempts, notes, saved questions, streaks and review schedules on this device. Export a backup first if unsure.</p>", "Delete everything")) { [K.hist, K.notes, K.bm, K.srs, K.days, K.prog].forEach(k => localStorage.removeItem(k)); toast("Progress cleared."); goView("history"); } }
+var A = {
+  theme: function () { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; put('wb_t', root.dataset.theme); if (sheetOpen()) sheet(); },
+  pick: function (v) { root.dataset.pal = v; put('wb_p', v); if (sheetOpen()) sheet(); },
+  year: function (v) { S.year = v; home(true); },
+  mode: function (v) { S.mode = v; home(true); },
+  kind: function (v) { S.kind = v; home(true); },
+  sec: function (v) { S.secs[v] = !S.secs[v]; home(true); },
+  topall: function () { TOPICS.forEach(function (t) { S.secs[t] = true; }); home(true); },
+  topnone: function () { TOPICS.forEach(function (t) { S.secs[t] = false; }); home(true); },
+  neg: function () { S.neg = !S.neg; home(true); },
+  start: start, home: function () { home(); },
+  opt: function (v) {
+    if (S.run === 'quiz') { if (S.ans[S.cur] !== null) return; buzz(); S.ans[S.cur] = +v; test(); return; }
+    buzz(); S.ans[S.cur] = +v; var c = S.cur; test();
+    if (SET.autoNext && c < S.qs.length - 1) setTimeout(function () { if (S.view === 'test' && S.cur === c) { S.cur++; test(); } }, 280);
+  },
+  prev: function () { if (S.cur > 0) { S.cur--; test(); } },
+  next: function () {
+    if (S.cur < S.qs.length - 1) { S.cur++; test(); return; }
+    if (S.run === 'quiz') { var u = S.ans.filter(function (x) { return x === null; }).length; if (u && !confirm(u + ' question(s) unanswered. Finish the quiz?')) return; submit(); }
+    else if (ask('Submit the test?')) submit();
+  },
+  mark: function () { if (S.mk[S.cur]) delete S.mk[S.cur]; else S.mk[S.cur] = 1; test(); },
+  clear: function () { S.ans[S.cur] = null; test(); },
+  save: function () { var q = S.qs[S.cur], e = SAV[q._k]; if (e && e.b) e.b = false; else keep(q, 'b'); persist(); test(); },
+  rsave: function (v, el) { var q = S.qs[+v], e = SAV[q._k]; if (e && e.b) e.b = false; else keep(q, 'b'); persist(); el.textContent = SAV[q._k] && SAV[q._k].b ? '🔖 Saved' : '🔖 Save'; },
+  jump: function (v) { S.cur = +v; closeGrid(); test(); },
+  secjump: function (v) { for (var i = 0; i < S.qs.length; i++) if (S.qs[i].s === v) { S.cur = i; break; } test(); },
+  grid: function () { S.grid ? closeGrid() : openGrid(); }, closegrid: closeGrid,
+  submit: function () { if (ask('Submit the test?')) submit(); },
+  exit: function () { if (confirm('Exit this test? Your progress will be lost.')) home(); },
+  sheet: function (v) { openSheet(v); }, closesheet: closeSheet,
+  tab: function (v) { S.tab = v; sheet(); $('#sbody').scrollTop = 0; },
+  sfil: function (v) { S.sf = v; sheet(); },
+  delsav: function (v) { delete SAV[v]; persist(); sheet(); },
+  practice: function () {
+    if (S.view === 'test') return alert('Finish or exit the current test first.');
+    var l = savedList(); if (!l.length) return; closeSheet(); S.mode = 'saved';
+    begin(l.map(function (e) { return { s: e.s, c: e.c, q: e.q, o: e.o.slice(), a: e.a, e: e.e, _k: e.k, _src: e.src }; }), 0, 'quiz');
+  },
+  ptopic: function (v) {  /* jump to the home screen with one topic pre-selected, across all years */
+    if (S.view === 'test') return alert('Finish or exit the current test first.');
+    closeSheet(); TOPICS.forEach(function (t) { S.secs[t] = (t === v); });
+    S.mode = 'sec'; S.kind = 'quiz'; S.year = PL.length > 1 ? 'all' : String(PL[0].year); home();
+  },
+  tg: function (v) { SET[v] = !SET[v]; if (v === 'defNeg') S.neg = SET.defNeg; saveSet(); sheet(); },
+  font: function (v) { SET.font = +v; saveSet(); sheet(); },
+  'export': function () { download('wbcs-backup.json', JSON.stringify({ att: ATT, sav: SAV, set: SET })); },
+  'import': function () { $('#imp').click(); },
+  wipe: function () { if (confirm('Delete all analytics and saved questions from this device?')) { ATT = []; SAV = {}; put('wb_att', ATT); put('wb_sav', SAV); sheet(); } }
 };
-document.addEventListener("click", e => { const b = e.target.closest("[data-act]"); if (b && ACTIONS[b.dataset.act]) ACTIONS[b.dataset.act](b.dataset, b); });
-document.addEventListener("change", e => {
-  if (e.target.id === "import-file" && e.target.files[0]) { importData(e.target.files[0]); e.target.value = ""; }
-  else if (e.target.id === "config-mode") { $("timer-mode").value = e.target.value === "exam" ? "perTest" : "none"; syncTimer(true); }
-  else if (e.target.id === "timer-mode") syncTimer(true);
-  else if (e.target.id === "config-count" && $("timer-mode").value === "perTest") syncTimer(true);
-  else if (e.target.id === "search-topic") runSearch();
-  else if (e.target.id === "exam-date" && e.target.value) { setPref("examDate", e.target.value); renderDashboard(); toast("Exam date saved."); }
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('[data-act]'); if (!t || t.disabled) return;
+  var f = A[t.dataset.act]; if (f) { if (t.dataset.act !== 'opt') buzz(); f(t.dataset.v, t); }
 });
-let searchT; document.addEventListener("input", e => { if (e.target.id === "search-input") { clearTimeout(searchT); searchT = setTimeout(runSearch, 200); } });
-let noteT; $("note-box").addEventListener("input", e => { clearTimeout(noteT); noteT = setTimeout(() => { if (!activeQuiz) return; const n = load(K.notes, {}), id = activeQuiz.questions[activeQuiz.index].id; if (e.target.value.trim()) n[id] = e.target.value; else delete n[id]; save(K.notes, n); }, 400); });
-document.addEventListener("keydown", e => {
-  if (!activeQuiz || document.body.dataset.view !== "quiz" || /TEXTAREA|INPUT|SELECT/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || !$("modal").classList.contains("hidden")) return;
-  const k = e.key.toLowerCase();
-  if (/^[1-4]$/.test(k)) pick(+k - 1); else if (k === "n" || k === "arrowright") goToQuestion(activeQuiz.index + 1);
-  else if (k === "p" || k === "arrowleft") goToQuestion(activeQuiz.index - 1); else if (k === "m") ACTIONS.mark(); else if (k === "b") ACTIONS.bm(); else if (k === "escape") document.body.classList.remove("focus");
+/* keyboard: 1-4 choose option · N / → next · P / ← previous · M mark */
+document.addEventListener('keydown', function (e) {
+  if (S.view !== 'test' || sheetOpen() || e.ctrlKey || e.metaKey || e.altKey || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  var k = e.key.toLowerCase();
+  if (k >= '1' && k <= '4') { if (S.qs[S.cur].o[+k - 1] !== undefined) A.opt(+k - 1); }
+  else if (k === 'n' || k === 'arrowright') { if (S.cur < S.qs.length - 1) A.next(); }
+  else if (k === 'p' || k === 'arrowleft') A.prev();
+  else if (k === 'm' && S.run !== 'quiz') A.mark();
 });
-let sx = 0, sy = 0;
-$("view-quiz").addEventListener("touchstart", e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
-$("view-quiz").addEventListener("touchend", e => {
-  if (!activeQuiz || /TEXTAREA/.test(e.target.tagName)) return;
-  const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-  if (Math.abs(dx) > 70 && Math.abs(dy) < 40) { if (dx < 0 && activeQuiz.index < activeQuiz.questions.length - 1) goToQuestion(activeQuiz.index + 1); else if (dx > 0) goToQuestion(activeQuiz.index - 1); }
-}, { passive: true });
-window.addEventListener("pagehide", saveProgress);
-
-/* ---------- 15. INIT ---------- */
-function initApp() {
-  migrate(); applyPrefs(); routing = true; showView("loading"); routing = false;
-  loadDataFiles(typeof PYQ_YEARS !== "undefined" ? PYQ_YEARS : [], () => {
-    PAPERS.sort((a, b) => String(a.year).localeCompare(String(b.year), undefined, { numeric: true }) || a.shift.localeCompare(b.shift));
-    ALL_QUESTIONS.forEach(q => QMAP.set(q.id, q)); detectRepeats(); VALIDATION = validateDataset();
-    renderCustomBuilder();
-    const first = location.hash.replace(/^#\/?/, "") || "dashboard", name = RENDER[first] ? first : "dashboard";
-    RENDER[name](); routing = true; showView(name); routing = false;
-    history.replaceState(null, "", "#/" + name);
-  });
-}
-document.addEventListener("DOMContentLoaded", initApp);
+home();
+})();
