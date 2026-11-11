@@ -18,24 +18,24 @@ window.RULES = {
   /* The 18 topics. `n` must match the "s" field of every question EXACTLY.
      `i` = icon, `k` = short code used on the radar chart. */
   topics: [
-    { n: 'English',                    i: '🔤', k: 'ENG'  },
-    { n: 'Ancient History',            i: '🏺', k: 'ANC'  },
-    { n: 'Medieval History',           i: '🏰', k: 'MED'  },
-    { n: 'Modern History',             i: '📜', k: 'MOD'  },
+    { n: 'English',                    i: '🔤', k: 'English'  },
+    { n: 'Ancient History',            i: '🏺', k: 'Ancient Hist.'  },
+    { n: 'Medieval History',           i: '🏰', k: 'Medieval Hist.'  },
+    { n: 'Modern History',             i: '📜', k: 'Modern Hist.'  },
     { n: 'Indian National Movement',   i: '🇮🇳', k: 'INM'  },
-    { n: 'Indian Geography',           i: '🗺️', k: 'IGEO' },
-    { n: 'World & Physical Geography', i: '🌍', k: 'WGEO' },
-    { n: 'Arts & Culture',             i: '🎭', k: 'A&C'  },
-    { n: 'West Bengal Specific',       i: '🐅', k: 'WB'   },
-    { n: 'Indian Polity',              i: '🏛️', k: 'POL'  },
-    { n: 'Indian Economy',            i: '💹', k: 'ECO'  },
-    { n: 'Physics',                    i: '⚛️', k: 'PHY'  },
-    { n: 'Chemistry',                  i: '🧪', k: 'CHE'  },
-    { n: 'Biology',                    i: '🧬', k: 'BIO'  },
-    { n: 'Environmental Studies',      i: '🌱', k: 'ENV'  },
-    { n: 'Static GK',                  i: '📌', k: 'GK'   },
-    { n: 'Current Affairs',            i: '📰', k: 'CA'   },
-    { n: 'General Mental Ability',     i: '🧠', k: 'GMA'  }
+    { n: 'Indian Geography',           i: '🗺️', k: 'Indian Geog.' },
+    { n: 'World & Physical Geography', i: '🌍', k: 'World & Phy Geog.' },
+    { n: 'Arts & Culture',             i: '🎭', k: 'Arts & Culture'  },
+    { n: 'West Bengal Specific',       i: '🐅', k: 'W.B. Specific'   },
+    { n: 'Indian Polity',              i: '🏛️', k: 'Polity'  },
+    { n: 'Indian Economy',            i: '💹', k: 'Econony'  },
+    { n: 'Physics',                    i: '⚛️', k: 'Physics'  },
+    { n: 'Chemistry',                  i: '🧪', k: 'Chemistry'  },
+    { n: 'Biology',                    i: '🧬', k: 'Biology'  },
+    { n: 'Environmental Studies',      i: '🌱', k: 'Envs'  },
+    { n: 'Static GK',                  i: '📌', k: 'Static GK'   },
+    { n: 'Current Affairs',            i: '📰', k: 'Current Affairs'   },
+    { n: 'General Mental Ability',     i: '🧠', k: 'Mental Ability'  }
   ]
 };
 
@@ -44,7 +44,27 @@ window.PAPER_LIST = [
   { year: 2024, file: 'data/2024.js' },
   { year: 2023, file: 'data/2023.js' },
   { year: 2022, file: 'data/2022.js' },
-  { year: 2021, file: 'data/2021.js' }
+  { year: 2021, file: 'data/2021.js' },
+  //{ year: 2020, file: 'data/2024.js' },
+  //{ year: 2019, file: 'data/2019.js' },
+  //{ year: 2018, file: 'data/2018.js' },
+  //{ year: 2017, file: 'data/2017.js' },
+  //{ year: 2016, file: 'data/2016.js' },
+  //{ year: 2015, file: 'data/2015.js' },
+  //{ year: 2014, file: 'data/2014.js' },
+  //{ year: 2013, file: 'data/2013.js' },
+  //{ year: 2012, file: 'data/2012.js' },
+  //{ year: 2011, file: 'data/2011.js' },
+  //{ year: 2010, file: 'data/2010.js' },
+  //{ year: 2009, file: 'data/2009.js' },
+  //{ year: 2008, file: 'data/2008.js' },
+  //{ year: 2007, file: 'data/2007.js' },
+  //{ year: 2006, file: 'data/2006.js' },
+  //{ year: 2005, file: 'data/2005.js' },
+  //{ year: 2004, file: 'data/2004.js' },
+  //{ year: 2003, file: 'data/2003.js' },
+  //{ year: 2002, file: 'data/2002.js' },
+  //{ year: 2001, file: 'data/2001.js' }
 ];
 
 /* ---- Motivational quotes (one is shown per day on the home screen). Add your own! ---- */
