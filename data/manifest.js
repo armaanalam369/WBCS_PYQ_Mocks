@@ -46,7 +46,7 @@ window.PAPER_LIST = [
   { year: 2022, file: 'data/2022.js' },
   { year: 2021, file: 'data/2021.js' },
   { year: 2020, file: 'data/2020.js' },
-  //{ year: 2019, file: 'data/2019.js' },
+  { year: 2019, file: 'data/2019.js' },
   //{ year: 2018, file: 'data/2018.js' },
   //{ year: 2017, file: 'data/2017.js' },
   //{ year: 2016, file: 'data/2016.js' },
