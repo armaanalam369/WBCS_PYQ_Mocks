@@ -53,18 +53,18 @@ window.PAPER_LIST = [
   { year: 2015, file: 'data/2015.js' },
   { year: 2014, file: 'data/2014.js' },
   { year: 2013, file: 'data/2013.js' },
-  //{ year: 2012, file: 'data/2012.js' },
-  //{ year: 2011, file: 'data/2011.js' },
-  //{ year: 2010, file: 'data/2010.js' },
-  //{ year: 2009, file: 'data/2009.js' },
-  //{ year: 2008, file: 'data/2008.js' },
-  //{ year: 2007, file: 'data/2007.js' },
-  //{ year: 2006, file: 'data/2006.js' },
-  //{ year: 2005, file: 'data/2005.js' },
-  //{ year: 2004, file: 'data/2004.js' },
-  //{ year: 2003, file: 'data/2003.js' },
-  //{ year: 2002, file: 'data/2002.js' },
-  //{ year: 2001, file: 'data/2001.js' }
+  { year: 2012, file: 'data/2012.js' },
+  { year: 2011, file: 'data/2011.js' },
+  { year: 2010, file: 'data/2010.js' },
+  { year: 2009, file: 'data/2009.js' },
+  { year: 2008, file: 'data/2008.js' },
+  { year: 2007, file: 'data/2007.js' },
+  { year: 2006, file: 'data/2006.js' },
+  { year: 2005, file: 'data/2005.js' },
+  { year: 2004, file: 'data/2004.js' },
+  { year: 2003, file: 'data/2003.js' },
+  { year: 2002, file: 'data/2002.js' },
+  { year: 2001, file: 'data/2001.js' }
 ];
 
 /* ---- Motivational quotes (one is shown per day on the home screen). Add your own! ---- */
