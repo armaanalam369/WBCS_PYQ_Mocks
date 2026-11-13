@@ -24,7 +24,7 @@ window.RULES = {
     { n: 'Indian Economy',             i: '💹', k: 'Econony'  },
     { n: 'Medieval History',           i: '🏰', k: 'Medieval History'  },
     { n: 'Physics',                    i: '⚛️', k: 'Physics'  },
-    { n: 'Indian National Movement',   i: '🇮🇳', k: 'Indian National Movement'  },
+    { n: 'Indian National Movement',   i: '🇮🇳', k: 'National Movement'  },
     { n: 'Chemistry',                  i: '🧪', k: 'Chemistry'  },
     { n: 'World & Physical Geography', i: '🌍', k: 'Physical Geography' },
     { n: 'Biology',                    i: '🧬', k: 'Biology'  },
