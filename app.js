@@ -217,7 +217,7 @@ function home(keepScroll) {
   card += '<div class="line"><span>Rough pad &amp; calculator<small>Show ✏️ and 🧮 buttons during the test</small></span>' + sw(SET.tools, 'tg', 'tools') + '</div>';
   if (!q && full) card += '<div class="line"><span>Full-screen exam mode<small>Warns if you leave full-screen or switch tabs</small></span>' + sw(SET.fullscreen, 'tg', 'fullscreen') + '</div>';
   var nStart = full ? sumC(counts(S.year, false)) : Math.min(S.cnt || 1e9, sumC(cYear, (function () { var m = {}; TOPICS.forEach(function (t) { if (S.secs[t]) m[t] = 1; }); return m; })()));
-  render('<section class="hero"><h1>“MASTER THE REAL WBCS PRELIMS</h1><p class="mu">Practise authentic WBCS Prelims papers with structured, timed sessions and performance insights.</p></section>' + stats + homeCards() +
+  render('<section class="hero"><h1>Master the Real PYQs of WEST BENGAL CIVIL SERVICES</h1><p class="mu">Practise authentic WBCS Prelims papers with structured, timed sessions and performance insights.</p></section>' + stats + homeCards() +
     '<h2>1 · Mode</h2><div class="chips"><button class="chip ' + (!q ? 'on' : '') + '" data-act="kind" data-v="test">📝 Exam Test</button><button class="chip ' + (q ? 'on' : '') + '" data-act="kind" data-v="quiz">💡 Quiz (instant answers)</button></div>' +
     '<h2>2 · Scope</h2><div class="chips"><button class="chip ' + (full ? 'on' : '') + '" data-act="mode" data-v="full">Full paper</button><button class="chip ' + (!full ? 'on' : '') + '" data-act="mode" data-v="sec">Chapter-wise practice</button></div>' +
     '<h2>3 · Year ' + (full ? 'paper' : 'filter') + '</h2><select class="sel" id="ysel" aria-label="Select year">' + opts + '</select>' +
