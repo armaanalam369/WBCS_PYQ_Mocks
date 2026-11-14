@@ -1,7 +1,7 @@
 /* WBCS Prelims 2000 paper.
    Complete authenticated questions with correct answers and explanations.
    Topic names match manifest.js rules exactly. */
-(window.PAPERS = window.PAPERS || {})[2000] = {
+(window.PAPERS = window.PAPERS || {})['2000'] = {
   year: 2000,
   title: 'WBCS Prelims 2000',
   questions: [
