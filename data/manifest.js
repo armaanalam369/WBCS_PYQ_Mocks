@@ -64,7 +64,8 @@ window.PAPER_LIST = [
   { year: 2004, file: 'data/2004.js' },
   { year: 2003, file: 'data/2003.js' },
   { year: 2002, file: 'data/2002.js' },
-  { year: 2001, file: 'data/2001.js' }
+  { year: 2001, file: 'data/2001.js' },
+  { year: 2000, file: 'data/2000.js' }
 ];
 
 /* ---- Motivational quotes (one is shown per day on the home screen). Add your own! ---- */
